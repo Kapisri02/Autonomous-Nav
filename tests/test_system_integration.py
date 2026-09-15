@@ -54,8 +54,10 @@ def odom_msg(x, stamp, v=0.1):
 
 
 def goal_msg(x, y):
+    # Odometry frame: the stubs provide no tf2_ros, so there is no map ->
+    # base_link transform and a map-frame goal would (correctly) be refused.
     msg = ros_stubs.PoseStamped()
-    msg.header.frame_id = 'map'
+    msg.header.frame_id = 'odom'
     msg.pose.position.x = x
     msg.pose.position.y = y
     return msg
@@ -64,6 +66,7 @@ def goal_msg(x, y):
 @pytest.fixture
 def running_node(tmp_path):
     node = node_module.BeetleBotNavNode()
+    node.set_parameter_value('global_frame', 'odom')
     node.config.logging.directory = str(tmp_path)
     node.logger.config.directory = str(tmp_path)
     return node

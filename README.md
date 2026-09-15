@@ -81,25 +81,44 @@ it can be tested anywhere and runs unchanged on the robot. Only
 
 ---
 
+## The workspace
+
+One workspace, two ROS packages:
+
+```
+~/beetlebot_ws/src/
+├── map_selection_test/     map display + endpoint selection (publishes /map,
+│                           reports the pose picked in RViz)
+└── beetlebot_risk_nav/     autonomous navigation (drives to the goal, avoids
+                            obstacles, publishes /cmd_vel_nav)
+```
+
+They share no code. `map_selection_test` logs the selected point; the navigation
+node subscribes to `/goal_pose` itself and drives there. Either can run alone.
+
 ## Installation
 
-On the robot (`ssh veerobot@beetlebot-124.local`):
-
 ```bash
-# 1. Put the package in your workspace
-cd ~/lyra_ws/src
-git clone https://github.com/Kapisri02/Hopefully-final.git
-ln -s ~/lyra_ws/src/Hopefully-final/src/beetlebot_risk_nav ~/lyra_ws/src/beetlebot_risk_nav
+mkdir -p ~/beetlebot_ws/src && cd ~/beetlebot_ws/src
+git clone -b claude/nifty-fermat-hx9jyj \
+    https://github.com/Kapisri02/Hopefully-final.git Hopefully-final
+ln -s ~/beetlebot_ws/src/Hopefully-final/src/beetlebot_risk_nav   ~/beetlebot_ws/src/
+ln -s ~/beetlebot_ws/src/Hopefully-final/src/map_selection_test   ~/beetlebot_ws/src/
 
-# 2. Build
-cd ~/lyra_ws
-colcon build --packages-select beetlebot_risk_nav
+# The map image is a binary asset and is not in git - copy it in once:
+cp ~/ros2_ws/src/map_selection_test/maps/test.pgm \
+   ~/beetlebot_ws/src/Hopefully-final/src/map_selection_test/maps/
+
+cd ~/beetlebot_ws
+rosdep install --from-paths src --ignore-src -r -y     # optional but recommended
+colcon build --symlink-install
 source install/setup.bash
 ```
 
-Dependencies are all part of a standard ROS 2 Jazzy desktop install: `rclpy`,
-`sensor_msgs`, `geometry_msgs`, `nav_msgs`, `std_msgs`, `tf2_ros`. Nothing from
-pip is required - the core uses only the Python standard library.
+Dependencies come from a standard ROS 2 Jazzy install (`rclpy`, `sensor_msgs`,
+`geometry_msgs`, `nav_msgs`, `std_msgs`, `tf2_ros`) plus `python3-yaml` and
+`python3-pil`, which `map_selection_node` uses to read the map. The navigation
+core itself needs nothing beyond the Python standard library.
 
 ---
 
@@ -118,16 +137,39 @@ ros2 launch lyra_bringup robot.launch.py
 on the map means something. Whatever you normally use (AMCL / nav2 localisation)
 is fine; all this package needs from it is the `map -> base_link` transform.
 
-**Terminal 3 - navigation:**
+**Terminal 3 - map, endpoint selection and navigation, in one command:**
 
 ```bash
-ssh veerobot@beetlebot-124.local
-source ~/lyra_ws/install/setup.bash
+source ~/beetlebot_ws/install/setup.bash
+ros2 launch beetlebot_risk_nav beetlebot_system.launch.py
+```
+
+This replaces the old four-terminal sequence. It publishes `/map`, listens for
+the endpoint, and runs the navigation node. To use `nav2_map_server` as the map
+publisher instead (it is lifecycle-managed; the launch configures and activates
+it for you), add `use_map_server:=true`. Navigation itself never goes through
+Nav2.
+
+Navigation alone, without the map or endpoint-selection node:
+
+```bash
 ros2 launch beetlebot_risk_nav beetlebot_nav.launch.py
 ```
 
-**Terminal 4 - RViz.** Use the **2D Goal Pose** tool to pick a destination.
-The robot drives there and stops.
+**Terminal 4 - RViz.** Set Fixed Frame to `map`, add a Map display on `/map`,
+then use the **2D Goal Pose** tool to pick a destination. The selection node
+logs the coordinates and the robot drives there and stops.
+
+### If you are not running localisation
+
+A goal picked on the map can only be driven to if something publishes
+`map -> base_link`. Without it the node **refuses to move** and says so, rather
+than comparing a map-frame goal against an odometry position and driving to the
+wrong place. To work deliberately in the odometry frame:
+
+```bash
+ros2 launch beetlebot_risk_nav beetlebot_system.launch.py global_frame:=odom
+```
 
 Watch what it is thinking:
 
@@ -257,6 +299,22 @@ space behind it is verified clear.
 Increase `planner.weight_smoothness`, or reduce `planner.slight_turn`. Check the
 log first: `analyze_log.py` shows whether it was flipping between manoeuvres.
 
+**The robot will not move and the status says "refusing to navigate".**
+The goal is in the `map` frame but no `map -> base_link` transform exists, so
+only the odometry position is known. Start your localisation, or relaunch with
+`global_frame:=odom` to navigate in the odometry frame deliberately.
+
+**The map does not appear in RViz.**
+Check Fixed Frame is `map` and the Map display topic is `/map`. If you passed
+`use_map_server:=true`, the lifecycle activation happens ~2 s after launch -
+check for `Transitioning successful`. Do not run `map_selection_node` and
+`nav2_map_server` as map publishers at the same time: two transient-local
+publishers on `/map` leave it ambiguous which one a subscriber latches.
+
+**`Failed to load map image`.**
+`test.pgm` has not been copied into `src/map_selection_test/maps/`. It is a
+binary asset and is not stored in git - see `maps/README.md`.
+
 **It never reaches a goal on the far side of a wall.**
 Expected: there is no global planner, by design. The robot steers toward the
 goal and avoids locally, so a route that needs to go *away* from the goal first
@@ -288,11 +346,15 @@ port of its logic for side-by-side comparison.
 
 ```
 baseline/lyra_control/obstacle_avoidance.py   preserved original
-src/beetlebot_risk_nav/
+src/beetlebot_risk_nav/                       ROS package: autonomous navigation
   beetlebot_risk_nav/core/      pure-Python decision core (no ROS, no NumPy)
   beetlebot_risk_nav/nodes/     ROS 2 adapter
   beetlebot_risk_nav/baseline/  ROS-free port of the baseline
-  config/, launch/              parameters and launch file
+  config/, launch/              parameters, beetlebot_nav + beetlebot_system launch
+src/map_selection_test/                       ROS package: map + endpoint selection
+  map_selection_test/map_selection_node.py    preserved verbatim
+  maps/test.yaml                installed to share/; test.pgm copied in separately
+  launch/map_selection.launch.py
 tests/                          the test suite
 scripts/run_tests.sh            build + lint + tests
 scripts/analyze_log.py          summarise a run

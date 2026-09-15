@@ -19,6 +19,11 @@
   <exec_depend>nav_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
+  <!-- Needed only by beetlebot_system.launch.py, which brings up the endpoint
+       selection alongside navigation. There is no code dependency between the
+       two packages: the coupling is the launch file and nothing else. -->
+  <exec_depend>map_selection_test</exec_depend>
+  <exec_depend>nav2_map_server</exec_depend>
 
   <test_depend>python3-pytest</test_depend>
 

@@ -21,7 +21,15 @@ from synthetic import corridor, make_scan  # noqa: E402
 
 
 def make_node(**parameters):
+    """A node in odometry mode by default.
+
+    The ROS stubs deliberately omit tf2_ros, so there is no map -> base_link
+    transform. That is the odometry-frame configuration, and goals must be
+    expressed in the same frame - mixing a map-frame goal with an odom-frame
+    pose is refused by design (see test_map_frame_goal_is_refused_without_tf).
+    """
     node = node_module.BeetleBotNavNode()
+    node.set_parameter_value('global_frame', 'odom')
     for key, value in parameters.items():
         node.set_parameter_value(key, value)
     return node
@@ -55,7 +63,7 @@ def odom_msg(x=0.0, y=0.0, yaw=0.0, v=0.0, w=0.0, stamp=1.0):
     return msg
 
 
-def goal_msg(x, y, frame='map'):
+def goal_msg(x, y, frame='odom'):
     msg = ros_stubs.PoseStamped()
     msg.header.frame_id = frame
     msg.pose.position.x = x
@@ -180,6 +188,26 @@ def test_goal_in_an_unknown_frame_is_refused_without_tf():
     node.subscriptions_by_topic['/goal_pose'](goal_msg(3.0, 0.0, frame='odd_frame'))
     assert node.navigator.goal is None
     assert node._logger.records.get('error')
+
+
+def test_map_frame_goal_is_refused_while_only_odometry_is_available():
+    """A map-frame goal against an odom-frame pose is a wrong-destination hazard.
+
+    Both are metres and nothing errors, so the robot would drive confidently to
+    somewhere that is not where it was told to go. With no localisation running
+    - which is the state of the four-terminal map workflow - the node must hold
+    still and explain itself instead.
+    """
+    node = node_module.BeetleBotNavNode()          # global_frame stays 'map'
+    node.subscriptions_by_topic['/goal_pose'](goal_msg(3.0, 0.0, frame='map'))
+    assert node.navigator.goal == (3.0, 0.0)       # the goal is accepted...
+    for k in range(5):
+        feed(node, 1.0 + k * 0.1, walls=corridor(2.0))
+    last = node.publishers_by_topic['/cmd_vel_nav'].messages[-1]
+    assert (last.linear.x, last.angular.z) == (0.0, 0.0)   # ...but nothing moves
+    status = node.publishers_by_topic['~/status'].messages[-1].data
+    assert 'refusing to navigate' in status
+    assert 'localisation' in status
 
 
 def test_invalid_configuration_refuses_to_start():

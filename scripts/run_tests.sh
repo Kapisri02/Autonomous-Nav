@@ -8,6 +8,7 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PACKAGE_ROOT="${REPO_ROOT}/src/beetlebot_risk_nav"
+SELECTION_ROOT="${REPO_ROOT}/src/map_selection_test"
 export PYTHONPATH="${PACKAGE_ROOT}:${REPO_ROOT}/tests:${PYTHONPATH:-}"
 
 PYTHON="${PYTHON:-python3}"
@@ -19,8 +20,9 @@ step() { printf '\n=== %s ===\n' "$1"; }
 fail() { echo "FAILED: $1"; status=1; }
 
 step "1/4 byte-compile (build check)"
-"${PYTHON}" -m compileall -q "${PACKAGE_ROOT}" "${REPO_ROOT}/tests" \
-    "${REPO_ROOT}/baseline" > /dev/null && echo "all modules compile" || fail "compileall"
+"${PYTHON}" -m compileall -q "${PACKAGE_ROOT}" "${SELECTION_ROOT}" \
+    "${REPO_ROOT}/tests" "${REPO_ROOT}/baseline" > /dev/null \
+    && echo "all modules compile (both packages)" || fail "compileall"
 
 step "2/4 import check"
 "${PYTHON}" - <<'PY' || fail "imports"
@@ -42,6 +44,8 @@ PY
 
 step "3/4 lint"
 if [ -n "${FLAKE8}" ]; then
+    # map_selection_test/map_selection_node.py is excluded: it is the user's
+    # working node, preserved verbatim, and is not ours to restyle.
     "${FLAKE8}" "${PACKAGE_ROOT}/beetlebot_risk_nav" "${REPO_ROOT}/tests" \
         && echo "lint clean" || fail "flake8"
 else

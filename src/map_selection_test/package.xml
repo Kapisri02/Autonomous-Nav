@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>map_selection_test</name>
+  <version>0.0.1</version>
+  <description>
+    Publishes the existing 2D map and reports the endpoint selected in RViz.
+    Loads test.yaml / test.pgm, publishes it as an OccupancyGrid on /map with
+    transient-local durability, and logs the coordinates of each pose received
+    on /goal_pose.
+  </description>
+  <maintainer email="kapisri02@todo.todo">kapisri02</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>nav_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <!-- The node imports yaml and PIL at runtime. These were missing, so a clean
+       machine would build the package successfully and then fail at run time
+       inside publish_map(). Declared so rosdep installs them. -->
+  <depend>python3-yaml</depend>
+  <depend>python3-pil</depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

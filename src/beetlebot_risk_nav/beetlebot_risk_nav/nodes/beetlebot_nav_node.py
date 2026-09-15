@@ -21,9 +21,15 @@ Pose source
 -----------
 The goal arrives in the map frame from RViz, so the robot's pose is taken from
 TF (``global_frame`` -> ``base_frame``), which is what the existing localisation
-publishes. If that transform is unavailable the node falls back to raw odometry
-and says so: odometry alone still navigates correctly relative to where the
-robot started, it just cannot honour a goal expressed on the map.
+publishes.
+
+If that transform is unavailable the node falls back to raw odometry. Odometry
+alone navigates correctly relative to where the robot started, so it is a usable
+mode - but only when the goal is expressed in the same frame. Comparing a
+map-frame goal against an odom-frame position would send the robot confidently
+to the wrong place, so in that combination the node **refuses to move** and says
+why, rather than driving on a warning. Set ``global_frame:=odom`` (or
+``use_tf:=false``) to navigate deliberately in the odometry frame.
 
 Stopping
 --------
@@ -83,6 +89,10 @@ class BeetleBotNavNode(Node):
         self.declare_parameter('cmd_vel_topic', '/cmd_vel_nav')
         self.declare_parameter('global_frame', 'map')
         self.declare_parameter('base_frame', 'base_link')
+        # The frame odometry is reported in. When global_frame differs from it,
+        # a goal picked on the map can only be honoured if localisation is
+        # publishing global_frame -> base_frame; see _robot_pose().
+        self.declare_parameter('odom_frame', 'odom')
         self.declare_parameter('control_frequency', 10.0)
         self.declare_parameter('use_tf', True)
         self.declare_parameter('publish_status', True)
@@ -206,10 +216,24 @@ class BeetleBotNavNode(Node):
     # ------------------------------------------------------------------
     def _control_cycle(self) -> None:
         now = self._now()
-        pose = self._robot_pose()
+        pose, pose_source = self._robot_pose()
         if pose is None:
             self._publish(Twist())
             self._publish_status('waiting for a robot pose (TF or odometry)')
+            return
+
+        # A goal on the map compared against an odometry position is a
+        # wrong-destination hazard: both are metres, nothing errors, and the
+        # robot drives somewhere that is not where it was told to go.
+        if pose_source == 'odom' and self._goal_needs_localisation():
+            self._publish(Twist())
+            self._publish_status(
+                'refusing to navigate: goal is in "{}" but no {} -> {} transform is '
+                'available, so only odometry-frame position is known. Start '
+                'localisation, or relaunch with global_frame:=odom.'.format(
+                    self.get_parameter('global_frame').value,
+                    self.get_parameter('global_frame').value,
+                    self.get_parameter('base_frame').value))
             return
 
         result = self.navigator.update(self._scan, pose, self._velocity, now,
@@ -246,8 +270,20 @@ class BeetleBotNavNode(Node):
                             elapsed * 1000.0, self._period * 1000.0, self._overrun_count))
 
     # ------------------------------------------------------------------
-    def _robot_pose(self) -> Optional[Tuple[float, float, float]]:
-        """Robot pose in the working frame: TF if available, else odometry."""
+    def _goal_needs_localisation(self) -> bool:
+        """True when the active goal can only be honoured with a TF-derived pose."""
+        if self.navigator.goal is None:
+            return False
+        global_frame = self.get_parameter('global_frame').value
+        odom_frame = self.get_parameter('odom_frame').value
+        return global_frame != odom_frame
+
+    def _robot_pose(self) -> Tuple[Optional[Tuple[float, float, float]], str]:
+        """Robot pose plus where it came from: ``'tf'`` or ``'odom'``.
+
+        The source matters to the caller, not just the pose: a pose that fell
+        back to odometry cannot be compared against a goal picked on the map.
+        """
         if self.tf_buffer is not None:
             global_frame = self.get_parameter('global_frame').value
             base_frame = self.get_parameter('base_frame').value
@@ -257,15 +293,16 @@ class BeetleBotNavNode(Node):
                     timeout=Duration(seconds=0.05))
                 t = tf.transform.translation
                 r = tf.transform.rotation
-                return (t.x, t.y, yaw_from_quaternion(r.x, r.y, r.z, r.w))
+                return ((t.x, t.y, yaw_from_quaternion(r.x, r.y, r.z, r.w)), 'tf')
             except Exception as exc:            # tf2 raises several exception types
                 if not self._warned_no_tf:
                     self._warned_no_tf = True
                     self.get_logger().warn(
                         '{} -> {} transform unavailable ({}); falling back to raw '
-                        'odometry. Goals set on the map will not be honoured until '
-                        'localisation is running.'.format(global_frame, base_frame, exc))
-        return self._odom_pose
+                        'odometry. A goal expressed in "{}" will NOT be driven to '
+                        'until localisation is running.'.format(
+                            global_frame, base_frame, exc, global_frame))
+        return (self._odom_pose, 'odom')
 
     def _goal_in_working_frame(self, msg: PoseStamped) -> Optional[Tuple[float, float]]:
         global_frame = self.get_parameter('global_frame').value
