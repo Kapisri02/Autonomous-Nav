@@ -101,19 +101,30 @@ node subscribes to `/goal_pose` itself and drives there. Either can run alone.
 ```bash
 mkdir -p ~/beetlebot_ws/src && cd ~/beetlebot_ws/src
 git clone -b claude/nifty-fermat-hx9jyj \
-    https://github.com/Kapisri02/Hopefully-final.git Hopefully-final
-ln -s ~/beetlebot_ws/src/Hopefully-final/src/beetlebot_risk_nav   ~/beetlebot_ws/src/
-ln -s ~/beetlebot_ws/src/Hopefully-final/src/map_selection_test   ~/beetlebot_ws/src/
+    https://github.com/Kapisri02/Autonomous-Nav.git
 
-# The map image is a binary asset and is not in git - copy it in once:
+# The map image is a binary asset and is not in git - copy it in ONCE, and do it
+# BEFORE building: setup.py collects maps with a glob that is evaluated at build
+# time, so a .pgm added afterwards is not installed until you rebuild.
 cp ~/ros2_ws/src/map_selection_test/maps/test.pgm \
-   ~/beetlebot_ws/src/Hopefully-final/src/map_selection_test/maps/
+   ~/beetlebot_ws/src/Autonomous-Nav/src/map_selection_test/maps/
 
 cd ~/beetlebot_ws
-rosdep install --from-paths src --ignore-src -r -y     # optional but recommended
+source /opt/ros/jazzy/setup.bash
+rosdep install --from-paths src --ignore-src -r -y     # pulls python3-yaml, python3-pil
 colcon build --symlink-install
 source install/setup.bash
+
+# Both packages must appear:
+ros2 pkg list | grep -E "beetlebot_risk_nav|map_selection_test"
 ```
+
+**No symlinks are needed, and you should not create any.** colcon crawls
+`src/` recursively and identifies a package by its `package.xml`, so it finds
+both packages at `src/Autonomous-Nav/src/*/package.xml` on its own. Symlinking
+them up to `src/` makes each package reachable by two paths, which means colcon
+discovers it twice - expect a duplicate-package-name failure. The clone alone is
+enough, which keeps the repository as the single source of truth.
 
 Dependencies come from a standard ROS 2 Jazzy install (`rclpy`, `sensor_msgs`,
 `geometry_msgs`, `nav_msgs`, `std_msgs`, `tf2_ros`) plus `python3-yaml` and
