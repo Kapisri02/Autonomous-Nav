@@ -1,0 +1,410 @@
+================================================================================
+BEETLEBOT LYRA: COMPLETE MULTI-TERMINAL AUTOMATED NAVIGATION GUIDE
+================================================================================
+
+TERMINAL 1: BRING UP THE ROBOT HARDWARE AND LIDAR
+--------------------------------------------------------------------------------
+1. Open a new terminal on your PC and SSH into the robot:
+   ssh veerobot@beetlebot-124.local
+
+2. Launch the main robot driver and laser system:
+   source /opt/ros/jazzy/setup.bash (or your specific ROS 2 version)
+   source ~/lyra_ws/install/setup.bash
+   ros2 launch lyra_bringup robot.launch.py
+
+* Keep this terminal open! Let it run in the background to handle the hardware.
+
+
+TERMINAL 2: SETUP, COMPILE, AND LAUNCH AUTONOMOUS DRIVING
+--------------------------------------------------------------------------------
+1. Open a SECOND terminal window on your PC and SSH into the robot again:
+   ssh veerobot@beetlebot-124.local
+
+2. Navigate to the Python scripts directory:
+   cd ~/lyra_ws/src/lyra_control/lyra_control/
+
+3. Open and clear the existing obstacle avoidance script:
+   nano obstacle_avoidance.py
+   * Action: Press and hold [Ctrl + K] until the file is completely empty.
+
+4. Paste the complete modified script below into nano:
+
+#!/usr/bin/env python3
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import LaserScan
+from geometry_msgs.msg import Twist
+import time
+import sys
+import signal
+
+
+class ObstacleAvoidanceNode(Node):
+
+    def __init__(self):
+        super().__init__('obstacle_avoidance_node')
+
+        self.scan_sub = self.create_subscription(
+            LaserScan,
+            '/scan',
+            self.scan_callback,
+            10
+        )
+
+        self.cmd_pub = self.create_publisher(
+            Twist,
+            '/cmd_vel_nav',
+            10
+        )
+
+        # -----------------------------
+        # Parameters
+        # -----------------------------
+        self.safe_distance = 0.5       # Minimum safe distance (m)
+        self.front_distance = 0.45     # Distance considered "directly in front"
+        self.move_speed = 0.2          # Forward speed
+        self.reverse_speed = 0.12      # Reverse speed
+        self.turn_speed = 0.4          # Turning speed
+
+        # How long to reverse when obstacle is directly ahead
+        self.reverse_time = 0.8        # seconds
+
+        # Prevent multiple reverse commands from overlapping
+        self.reversing = False
+        self.reverse_start_time = None
+
+        self.get_logger().info(
+            'Obstacle Avoidance Node started. '
+            'Monitoring /scan...'
+        )
+
+        signal.signal(signal.SIGINT, self.signal_handler)
+
+    def get_valid_ranges(self, ranges):
+        """
+        Remove invalid LaserScan values such as:
+        inf, nan, values outside sensor limits.
+        """
+        return [
+            r for r in ranges
+            if r > 0.0 and
+            r != float('inf') and
+            r == r and
+            r >= self.current_range_min and
+            r <= self.current_range_max
+        ]
+
+    def scan_callback(self, msg):
+
+        if not msg.ranges:
+            return
+
+        self.current_range_min = msg.range_min
+        self.current_range_max = msg.range_max
+
+        num_readings = len(msg.ranges)
+
+        # ------------------------------------------------
+        # Divide laser scan into LEFT / FRONT / RIGHT
+        # ------------------------------------------------
+
+        # Assuming LaserScan:
+        # 0 degrees = front
+        # positive = left
+        # negative = right
+
+        front_window = int(num_readings / 12)
+        side_window = int(num_readings / 6)
+
+        # FRONT
+        front_ranges = (
+            msg.ranges[-front_window:] +
+            msg.ranges[:front_window]
+        )
+
+        # LEFT
+        left_start = front_window
+        left_end = side_window
+
+        left_ranges = msg.ranges[
+            left_start:left_end
+        ]
+
+        # RIGHT
+        right_start = num_readings - side_window
+        right_end = num_readings - front_window
+
+        right_ranges = msg.ranges[
+            right_start:right_end
+        ]
+
+        # ------------------------------------------------
+        # Get valid readings
+        # ------------------------------------------------
+
+        valid_front = self.get_valid_ranges(front_ranges)
+        valid_left = self.get_valid_ranges(left_ranges)
+        valid_right = self.get_valid_ranges(right_ranges)
+
+        # If no valid readings at all, stop
+        if not valid_front and not valid_left and not valid_right:
+
+            twist = Twist()
+            twist.linear.x = 0.0
+            twist.angular.z = 0.0
+
+            self.cmd_pub.publish(twist)
+
+            self.get_logger().warn(
+                'No valid laser readings. Stopping.'
+            )
+
+            return
+
+        # ------------------------------------------------
+        # Calculate minimum distances
+        # ------------------------------------------------
+
+        front_distance = (
+            min(valid_front)
+            if valid_front
+            else float('inf')
+        )
+
+        left_distance = (
+            min(valid_left)
+            if valid_left
+            else float('inf')
+        )
+
+        right_distance = (
+            min(valid_right)
+            if valid_right
+            else float('inf')
+        )
+
+        self.get_logger().info(
+            f'Front: {front_distance:.2f} m | '
+            f'Left: {left_distance:.2f} m | '
+            f'Right: {right_distance:.2f} m'
+        )
+
+        # ------------------------------------------------
+        # HANDLE REVERSING
+        # ------------------------------------------------
+
+        if self.reversing:
+
+            elapsed = time.time() - self.reverse_start_time
+
+            if elapsed < self.reverse_time:
+
+                twist = Twist()
+
+                # Move backwards
+                twist.linear.x = -self.reverse_speed
+                twist.angular.z = 0.0
+
+                self.cmd_pub.publish(twist)
+
+                return
+
+            else:
+                # Finished reversing
+                self.reversing = False
+
+                self.get_logger().info(
+                    'Reverse complete. Scanning left and right...'
+                )
+
+                # ------------------------------------------------
+                # Choose the direction with more free space
+                # ------------------------------------------------
+
+                if left_distance > right_distance:
+
+                    self.get_logger().info(
+                        f'Left is clearer ({left_distance:.2f}m). '
+                        'Turning LEFT.'
+                    )
+
+                    twist = Twist()
+                    twist.linear.x = 0.0
+                    twist.angular.z = self.turn_speed
+
+                else:
+
+                    self.get_logger().info(
+                        f'Right is clearer ({right_distance:.2f}m). '
+                        'Turning RIGHT.'
+                    )
+
+                    twist = Twist()
+                    twist.linear.x = 0.0
+                    twist.angular.z = -self.turn_speed
+
+                self.cmd_pub.publish(twist)
+
+                return
+
+        # ------------------------------------------------
+        # DIRECTLY IN FRONT
+        # ------------------------------------------------
+
+        if front_distance < self.front_distance:
+
+            self.get_logger().warn(
+                f'Obstacle directly ahead at '
+                f'{front_distance:.2f}m!'
+            )
+
+            self.get_logger().warn(
+                'Reversing before choosing direction...'
+            )
+
+            # Start reversing
+            self.reversing = True
+            self.reverse_start_time = time.time()
+
+            twist = Twist()
+
+            # Move backwards
+            twist.linear.x = -self.reverse_speed
+            twist.angular.z = 0.0
+
+            self.cmd_pub.publish(twist)
+
+            return
+
+        # ------------------------------------------------
+        # FRONT IS SOMEWHAT BLOCKED
+        # ------------------------------------------------
+
+        if front_distance < self.safe_distance:
+
+            self.get_logger().warn(
+                f'Obstacle near front at '
+                f'{front_distance:.2f}m'
+            )
+
+            # Choose the clearer side
+            if left_distance > right_distance:
+
+                self.get_logger().info(
+                    f'Turning LEFT. '
+                    f'Left: {left_distance:.2f}m | '
+                    f'Right: {right_distance:.2f}m'
+                )
+
+                twist = Twist()
+                twist.linear.x = 0.0
+                twist.angular.z = self.turn_speed
+
+            else:
+
+                self.get_logger().info(
+                    f'Turning RIGHT. '
+                    f'Left: {left_distance:.2f}m | '
+                    f'Right: {right_distance:.2f}m'
+                )
+
+                twist = Twist()
+                twist.linear.x = 0.0
+                twist.angular.z = -self.turn_speed
+
+            self.cmd_pub.publish(twist)
+
+            return
+
+        # ------------------------------------------------
+        # FRONT CLEAR
+        # ------------------------------------------------
+
+        twist = Twist()
+
+        twist.linear.x = self.move_speed
+        twist.angular.z = 0.0
+
+        self.cmd_pub.publish(twist)
+
+    # ------------------------------------------------
+    # CTRL+C HANDLER
+    # ------------------------------------------------
+
+    def signal_handler(self, sig, frame):
+
+        print(
+            "\n[CRITICAL] Ctrl+C intercepted! "
+            "Halting wheels before exiting..."
+        )
+
+        stop_msg = Twist()
+
+        for _ in range(20):
+            self.cmd_pub.publish(stop_msg)
+            time.sleep(0.02)
+
+        print("[INFO] Robot safely stopped. Closing node.")
+
+        self.destroy_node()
+        rclpy.try_shutdown()
+
+        sys.exit(0)
+
+
+def main(args=None):
+
+    rclpy.init(args=args)
+
+    node = ObstacleAvoidanceNode()
+
+    try:
+        rclpy.spin(node)
+
+    except Exception as e:
+
+        print(
+            f"Node encountered an error: {e}"
+        )
+
+    finally:
+
+        rclpy.try_shutdown()
+
+
+if __name__ == '__main__':
+    main()
+
+5. Save and Close the Python Script:
+   * Press [Ctrl + O] then [Enter] to save.
+   * Press [Ctrl + X] to exit.
+   * Set execution flag: chmod +x obstacle_avoidance.py
+
+6. Modify setup.py to Register the Binary Entry Point:
+   cd ~/lyra_ws/src/lyra_control/
+   nano setup.py
+
+   * Scroll down to the 'console_scripts' section and add the obstacle_avoid line:
+   entry_points={
+       'console_scripts': [
+           'cmd_vel_mux = lyra_control.cmd_vel_mux:main',
+           'joy_teleop_wrapper = lyra_control.joy_teleop_wrapper:main',
+           'obstacle_avoid = lyra_control.obstacle_avoidance:main',
+       ],
+   },
+
+   * Press [Ctrl + O] then [Enter] to save.
+   * Press [Ctrl + X] to exit.
+
+7. Build and Source the Target Package:
+   cd ~/lyra_ws
+   colcon build --packages-select lyra_control
+   source install/setup.bash
+
+8. Execute the Avoidance Protocol:
+   ros2 run lyra_control obstacle_avoid
+
+* Safety Halt: Press [Ctrl + C] in this terminal. The program locks the wheels
+  to a dead stop instantly, avoiding any runaway spinning!
+================================================================================
+
