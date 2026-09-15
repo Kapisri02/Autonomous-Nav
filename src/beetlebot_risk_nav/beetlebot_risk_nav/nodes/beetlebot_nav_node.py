@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import math
 import sys
+import time
 from typing import Optional, Tuple
 
 import rclpy
@@ -47,6 +48,7 @@ from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, String
 
 from beetlebot_risk_nav.core.geometry import yaw_from_quaternion
+from beetlebot_risk_nav.core.logging_utils import NavigationLogger
 from beetlebot_risk_nav.core.navigator import STATE_GOAL_REACHED, Navigator
 from beetlebot_risk_nav.core.params import NavConfig, describe
 from beetlebot_risk_nav.core.types import ScanData
@@ -95,6 +97,7 @@ class BeetleBotNavNode(Node):
             raise RuntimeError('refusing to start with an invalid configuration')
 
         self.navigator = Navigator(self.config)
+        self.logger = NavigationLogger(self.config.logging)
 
         # --- state ---------------------------------------------------------
         self._scan: Optional[ScanData] = None
@@ -191,6 +194,11 @@ class BeetleBotNavNode(Node):
                     msg.header.frame_id, self.get_parameter('global_frame').value))
             return
         self.navigator.set_goal(goal, self._now())
+        path = self.logger.start_episode(goal, time.time())
+        if path:
+            self.get_logger().info('logging this run to {}'.format(path))
+        elif self.logger.disabled_reason:
+            self.get_logger().warn('logging disabled: {}'.format(self.logger.disabled_reason))
         self._goal_announced = False
         self.reached_pub.publish(Bool(data=False))
         self.get_logger().info('new goal: ({:.2f}, {:.2f})'.format(*goal))
@@ -212,13 +220,19 @@ class BeetleBotNavNode(Node):
         twist.angular.z = float(result.command.w)
         self._publish(twist)
         self._publish_status(result.status)
+        if not result.finished:
+            self.logger.log_cycle(now, result, pose)
 
         if result.state == STATE_GOAL_REACHED and not self._goal_announced:
             self._goal_announced = True
             self.reached_pub.publish(Bool(data=True))
+            self.logger.log_cycle(now, result, pose)
+            self.logger.close()
             self.get_logger().info('SUCCESS: {}'.format(result.status))
         elif result.state == 'FAILED' and not self._goal_announced:
             self._goal_announced = True
+            self.logger.log_cycle(now, result, pose)
+            self.logger.close()
             self.get_logger().error('navigation failed: {}'.format(result.status))
 
         if result.plan is not None:
@@ -319,6 +333,7 @@ def main(args=None) -> None:
         if node is not None:
             node.get_logger().info('stopping the robot before shutdown')
             node.halt()
+            node.logger.close()
             node.destroy_node()
         rclpy.try_shutdown()
 
