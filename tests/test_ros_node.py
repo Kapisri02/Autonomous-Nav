@@ -221,3 +221,96 @@ def test_invalid_configuration_refuses_to_start():
             node_module.BeetleBotNavNode()
     finally:
         params.NavConfig.validate = original
+
+
+# ----------------------------------------------------------------------
+# TF consultation
+# ----------------------------------------------------------------------
+def _enable_tf(node, buffer_obj):
+    """Attach a fake TF buffer to a node running without tf2_ros.
+
+    The node imports Duration alongside tf2_ros, and the stubs deliberately
+    provide neither, so the name has to be supplied here. On a real install the
+    two always arrive together; this is a limitation of the stub environment,
+    not of the node.
+    """
+    node_module.Duration = lambda **kwargs: None
+    node.tf_buffer = buffer_obj
+    return buffer_obj
+
+
+class _RecordingTfBuffer:
+    """Stands in for tf2_ros.Buffer and records every lookup attempted.
+
+    Raises the way tf2 does for a frame that was never published, which is what
+    happens with no localisation running.
+    """
+
+    def __init__(self):
+        self.lookups = []
+
+    def lookup_transform(self, target, source, time, timeout=None):
+        self.lookups.append((target, source))
+        raise RuntimeError(
+            '"{}" passed to lookupTransform argument target_frame does not '
+            'exist.'.format(target))
+
+
+def test_tf_is_not_consulted_when_the_working_frame_is_the_odometry_frame():
+    """Regression: a blocking lookup for a frame that will never arrive.
+
+    lookup_transform blocks for its whole timeout when the transform is
+    unavailable. With global_frame:=odom the node was still asking for
+    odom -> base_link every cycle, spending 50 ms of each 100 ms control period
+    waiting for something odometry already provides.
+    """
+    node = make_node()                       # global_frame == 'odom'
+    _enable_tf(node, _RecordingTfBuffer())
+    for k in range(5):
+        feed(node, 1.0 + k * 0.1, walls=corridor(2.0))
+    assert node.tf_buffer.lookups == [], \
+        'TF was consulted {} times in odometry mode'.format(len(node.tf_buffer.lookups))
+
+
+def test_tf_is_consulted_when_the_goal_frame_differs_from_odometry():
+    """Map-frame operation must still go through TF - that is the whole point."""
+    node = node_module.BeetleBotNavNode()    # global_frame stays 'map'
+    _enable_tf(node, _RecordingTfBuffer())
+    feed(node, 1.0, walls=corridor(2.0))
+    assert ('map', 'base_link') in node.tf_buffer.lookups
+
+
+def test_odometry_mode_still_drives_without_any_transform():
+    """With goal and pose both in the odometry frame, no localisation is needed."""
+    node = make_node()
+    _enable_tf(node, _RecordingTfBuffer())
+    node.subscriptions_by_topic['/goal_pose'](goal_msg(3.0, 0.0, frame='odom'))
+    for k in range(5):
+        feed(node, 1.0 + k * 0.1, walls=corridor(2.0))
+    assert node.publishers_by_topic['/cmd_vel_nav'].messages[-1].linear.x > 0.0
+
+
+def test_cycle_budget_warning_covers_the_whole_cycle_not_just_planning():
+    """Regression: the overrun check timed plan() only.
+
+    Anything slow outside the planner - a blocking TF lookup, for instance -
+    could consume the control period without ever tripping the warning.
+    """
+    node = make_node()
+
+    slow = _RecordingTfBuffer()
+
+    def slow_lookup(target, source, time, timeout=None):
+        import time as _time
+        _time.sleep(0.15)                    # longer than the 100 ms budget
+        raise RuntimeError('unavailable')
+
+    slow.lookup_transform = slow_lookup
+    _enable_tf(node, slow)
+    node.set_parameter_value('global_frame', 'map')   # force the lookup
+    node.subscriptions_by_topic['/goal_pose'](goal_msg(3.0, 0.0, frame='map'))
+    feed(node, 1.0, walls=corridor(2.0))
+
+    warnings = node._logger.records.get('warn', [])
+    assert any('control cycle took' in w for w in warnings), warnings
+    assert any('planning' in w for w in warnings)

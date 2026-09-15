@@ -9,7 +9,8 @@ obstacles, stop within tolerance, and report SUCCESS.
 | **Current phase** | Phase 4 - endpoint selection merged into one workspace |
 | **Git checkpoint** | `final-software-ready` (Phase 3); Phase 4 on the branch |
 | **GitHub push status** | branch pushed; **tag pushes blocked by policy (HTTP 403)** - see below |
-| **Physical validation** | **NOT PERFORMED** |
+| **Physical validation** | **NOT PERFORMED** (robot untouched) |
+| **Real ROS 2 validation** | **PARTIAL - both nodes launch and their interfaces are confirmed on ROS 2 Jazzy** |
 
 ---
 
@@ -133,11 +134,11 @@ README.md, docs/ROS_INTERFACES.md
 | Byte-compile (build) | pass |
 | Import check | pass - 17 modules import without ROS |
 | Lint (flake8) | pass - clean |
-| Test suite | **182 passed**, 0 failed |
+| Test suite | **186 passed**, 0 failed |
 
 By area: geometry 13, config 9, scan filtering 12, clustering 7, footprint 9,
 TTC 10, tracking 9, risk 10, velocity 8, local planner 17, safety 20,
-navigator 14, ROS node 15, logging/tools 9, system integration 4,
+navigator 14, ROS node 19, logging/tools 9, system integration 4,
 workspace layout 11.
 
 ### Phase 3 verification checklist
@@ -246,6 +247,46 @@ with normal GitHub access:
 git fetch origin
 git push origin phase-1-working phase-2-working final-software-ready
 ```
+
+---
+
+## Verified on real ROS 2 Jazzy (laptop, no robot)
+
+First execution of this project under real ROS, from `~/beetlebot_ws`:
+
+| Item | Result |
+|---|---|
+| `colcon build --symlink-install` | both packages built |
+| Package discovery | `/beetlebot_nav` and `/map_selection_node` both running from one workspace |
+| Map from the packaged share path | `Published map: 480 x 480 cells, 0.05 m/cell, origin [-5, -12.0, 0.0]` - no `~/ros2_ws` path involved |
+| Subscriptions | `/scan` LaserScan, `/odom` Odometry, `/goal_pose` PoseStamped, `/tf`, `/tf_static` |
+| Publications | `/cmd_vel_nav` Twist, `/beetlebot_nav/status` String, `/beetlebot_nav/goal_reached` Bool |
+| Parameters | the full dotted set is exposed and settable |
+| Configuration banner | footprint 0.375 x 0.360 m rectangular, inflation 0.060 m, 10 Hz |
+| Behaviour with no sensors | `waiting for a robot pose (TF or odometry)`, zero velocity - correct refusal |
+
+Still unverified on real ROS: behaviour with live `/scan` and `/odom`, TF from a
+running localisation, and anything involving the robot.
+
+The `BrokenPipeError` from `ros2 param list ... | head -30` is `ros2cli` reacting
+to the closed pipe, not a fault in this package.
+
+### Defects this first real-ROS run exposed
+
+1. **A blocking TF lookup every cycle in odometry mode.** With
+   `global_frame:=odom` the node still asked TF for `odom -> base_link`.
+   `lookup_transform` blocks for its whole timeout when the transform is
+   unavailable, so it spent 50 ms of every 100 ms control period waiting for
+   something odometry already provides. TF is now skipped when the working frame
+   is the odometry frame.
+2. **The cycle-budget watchdog was blind to it.** It timed `plan()` only, so
+   anything slow outside the planner could consume the control period silently.
+   It now times the whole cycle - in a `finally`, so the early-exit paths (no
+   pose yet, goal refused) are covered too, which is precisely where a slow TF
+   lookup shows up.
+3. **A misleading warning.** In odometry mode it claimed the goal would not be
+   driven to "until localisation is running", which is false - no localisation is
+   needed when goal and pose are both in the odometry frame.
 
 ---
 

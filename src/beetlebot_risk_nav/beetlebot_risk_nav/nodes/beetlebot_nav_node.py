@@ -215,12 +215,27 @@ class BeetleBotNavNode(Node):
 
     # ------------------------------------------------------------------
     def _control_cycle(self) -> None:
+        """Run one cycle, timing it whichever way it exits.
+
+        The budget check lives in a finally block rather than at the end of the
+        body: several paths return early (no pose yet, goal refused), and those
+        are exactly the paths where something slow - a blocking TF lookup - is
+        likely to be what made the cycle late.
+        """
+        cycle_started = time.monotonic()
+        result = None
+        try:
+            result = self._run_cycle()
+        finally:
+            self._check_cycle_budget(cycle_started, result)
+
+    def _run_cycle(self):
         now = self._now()
         pose, pose_source = self._robot_pose()
         if pose is None:
             self._publish(Twist())
             self._publish_status('waiting for a robot pose (TF or odometry)')
-            return
+            return None
 
         # A goal on the map compared against an odometry position is a
         # wrong-destination hazard: both are metres, nothing errors, and the
@@ -234,7 +249,7 @@ class BeetleBotNavNode(Node):
                     self.get_parameter('global_frame').value,
                     self.get_parameter('global_frame').value,
                     self.get_parameter('base_frame').value))
-            return
+            return None
 
         result = self.navigator.update(self._scan, pose, self._velocity, now,
                                        odom_stamp=self._odom_stamp)
@@ -259,17 +274,30 @@ class BeetleBotNavNode(Node):
             self.logger.close()
             self.get_logger().error('navigation failed: {}'.format(result.status))
 
-        if result.plan is not None:
-            elapsed = result.plan.debug.compute_time
-            if elapsed > self._period:
-                self._overrun_count += 1
-                if self._overrun_count % 10 == 1:
-                    self.get_logger().warn(
-                        'control cycle took {:.1f} ms, over the {:.1f} ms budget '
-                        '({} overruns); consider lidar.decimation'.format(
-                            elapsed * 1000.0, self._period * 1000.0, self._overrun_count))
+        return result
 
     # ------------------------------------------------------------------
+    def _check_cycle_budget(self, cycle_started: float, result) -> None:
+        elapsed = time.monotonic() - cycle_started
+        if elapsed <= self._period:
+            return
+        self._overrun_count += 1
+        if self._overrun_count % 10 != 1:
+            return
+        planning = (result.plan.debug.compute_time * 1000.0
+                    if result is not None and result.plan is not None else 0.0)
+        self.get_logger().warn(
+            'control cycle took {:.1f} ms ({:.1f} ms of it planning), over the '
+            '{:.1f} ms budget ({} overruns). If planning dominates, raise '
+            'lidar.decimation; if it does not, the time is going elsewhere in '
+            'the cycle.'.format(elapsed * 1000.0, planning,
+                                self._period * 1000.0, self._overrun_count))
+
+    def _working_frame_is_odom(self) -> bool:
+        """True when goals and poses are both expressed in the odometry frame."""
+        return (self.get_parameter('global_frame').value
+                == self.get_parameter('odom_frame').value)
+
     def _goal_needs_localisation(self) -> bool:
         """True when the active goal can only be honoured with a TF-derived pose."""
         if self.navigator.goal is None:
@@ -283,8 +311,15 @@ class BeetleBotNavNode(Node):
 
         The source matters to the caller, not just the pose: a pose that fell
         back to odometry cannot be compared against a goal picked on the map.
+
+        When the working frame *is* the odometry frame there is nothing for TF
+        to resolve - odometry is already the authority - so the lookup is
+        skipped entirely. That is not just tidiness: ``lookup_transform``
+        blocks for its full timeout when the transform is unavailable, so
+        asking for a frame that will never arrive cost 50 ms of every 100 ms
+        control period.
         """
-        if self.tf_buffer is not None:
+        if self.tf_buffer is not None and not self._working_frame_is_odom():
             global_frame = self.get_parameter('global_frame').value
             base_frame = self.get_parameter('base_frame').value
             try:
@@ -298,10 +333,12 @@ class BeetleBotNavNode(Node):
                 if not self._warned_no_tf:
                     self._warned_no_tf = True
                     self.get_logger().warn(
-                        '{} -> {} transform unavailable ({}); falling back to raw '
-                        'odometry. A goal expressed in "{}" will NOT be driven to '
-                        'until localisation is running.'.format(
-                            global_frame, base_frame, exc, global_frame))
+                        '{} -> {} transform unavailable ({}). A goal expressed in '
+                        '"{}" will NOT be driven to until localisation publishes '
+                        'that transform. To navigate in the odometry frame '
+                        'instead, relaunch with global_frame:={}.'.format(
+                            global_frame, base_frame, exc, global_frame,
+                            self.get_parameter('odom_frame').value))
         return (self._odom_pose, 'odom')
 
     def _goal_in_working_frame(self, msg: PoseStamped) -> Optional[Tuple[float, float]]:
