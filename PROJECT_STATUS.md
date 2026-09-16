@@ -264,9 +264,11 @@ First execution of this project under real ROS, from `~/beetlebot_ws`:
 | Parameters | the full dotted set is exposed and settable |
 | Configuration banner | footprint 0.375 x 0.360 m rectangular, inflation 0.060 m, 10 Hz |
 | Behaviour with no sensors | `waiting for a robot pose (TF or odometry)`, zero velocity - correct refusal |
+| Endpoint-selection workflow | confirmed working by the user: RViz shows `/map`, a 2D Goal Pose click reaches both nodes from one workspace (reported, terminal output not captured here) |
 
 Still unverified on real ROS: behaviour with live `/scan` and `/odom`, TF from a
-running localisation, and anything involving the robot.
+running localisation, control-loop timing on the Raspberry Pi 5, and anything
+involving the robot itself.
 
 The `BrokenPipeError` from `ros2 param list ... | head -30` is `ros2cli` reacting
 to the closed pipe, not a fault in this package.
