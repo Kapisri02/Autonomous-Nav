@@ -50,8 +50,10 @@ class RiskAssessor:
         ``forward_clearance`` is measured from the filtered scan rather than from
         clustering, so a clustering fault cannot make the world look safe.
         """
+        cfg = self.config
         result = RiskAssessment()
         worst = 0
+        max_closing = 0.0
         result.clearance = forward_clearance
 
         # The scan-derived forward clearance can raise the level on its own.
@@ -65,6 +67,9 @@ class RiskAssessor:
                 (0.0, 0.0, 0.0), (track.rel_x, track.rel_y, track.radius)))
             weighted = self._weighted_clearance(clearance, track.rel_bearing)
             ttc = track_ttc(track, footprint.circumscribed)
+
+            if track.closing_speed > max_closing:
+                max_closing = track.closing_speed
 
             level = max(self._distance_level(weighted), self._ttc_level(ttc))
             if clearance < result.clearance:
@@ -82,6 +87,8 @@ class RiskAssessor:
                     track.track_id, clearance, math.degrees(track.rel_bearing),
                     ttc, ', moving' if track.is_moving else '')
 
+        result.max_closing_speed = max_closing
+        result.approaching = max_closing >= cfg.closing_speed_threshold
         result.level = RISK_LEVELS[worst]
         result.speed_scale = self.speed_scale(result.level)
         if not result.reason:

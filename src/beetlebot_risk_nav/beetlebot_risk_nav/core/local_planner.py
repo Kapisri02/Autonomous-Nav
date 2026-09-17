@@ -180,7 +180,9 @@ class LocalPlanner:
             result.debug.notes = result.command.reason
             result.debug.compute_time = time.monotonic() - started
             return result
-        obstacles = self.detector.detect(filtered)
+        obstacles = self.detector.detect(
+            filtered, truncation_range=cfg.lidar.max_usable_range,
+            sensor_origin=(cfg.lidar.mount_offset_x, cfg.lidar.mount_offset_y))
         result.obstacles = obstacles
         tracks = self.tracker.update(obstacles, scan.stamp, robot_pose, robot_velocity)
         result.tracks = tracks
@@ -206,7 +208,15 @@ class LocalPlanner:
         result.speed_limit = speed_limit
 
         # --- score the menu ---------------------------------------------------
-        options = self.motion_options(speed_limit, allow_reverse)
+        # Against an approaching hazard, holding position is not a safe state:
+        # the obstacle closes the remaining gap regardless of what the robot
+        # does. Reversing is therefore admitted as an option once the situation
+        # is severe AND something is actively closing, rather than being
+        # withheld until the inactivity timer eventually starts a recovery.
+        # The footprint check still has to pass, and the supervisor still
+        # verifies rear clearance before any retreat leaves the node.
+        evasive = assessment.approaching and assessment.at_least('DANGER')
+        options = self.motion_options(speed_limit, allow_reverse or evasive)
         for option in options:
             option.poses = self.rollout(option.v, option.w, times)
         self._evaluate(options, goal_local, static_points, movers, times, speed_limit,
@@ -228,10 +238,26 @@ class LocalPlanner:
         # Selection follows the brief's priority: SAFETY > AVOIDANCE > GOAL.
         # Critical risk stops the robot outright; escaping from there is the
         # recovery behaviour's job, not the local planner's.
-        if assessment.level == 'CRITICAL':
+        if evasive and best is None:
+            fallback = self._least_bad(options)
+            if fallback is not None and fallback.collision_time > 0.0:
+                result.best = fallback
+                command = Command(v=fallback.v, w=fallback.w, source='local_planner',
+                                  reason='unavoidable approach, maximising time to '
+                                         'contact: ' + fallback.name)
+            else:
+                result.best = None
+                command = Command(v=0.0, w=0.0, source='local_planner',
+                                  reason='approaching hazard, no motion improves '
+                                         'the outcome')
+        elif assessment.level == 'CRITICAL' and not evasive:
             result.best = None
             command = Command(v=0.0, w=0.0, source='local_planner',
                               reason='critical risk: ' + assessment.reason)
+        elif assessment.level == 'CRITICAL' and best is not None:
+            result.best = best
+            command = Command(v=best.v, w=best.w, source='local_planner',
+                              reason='evading approaching hazard: ' + best.name)
         elif best is not None:
             result.best = best
             command = Command(v=best.v, w=best.w, source='local_planner',
@@ -404,6 +430,24 @@ class LocalPlanner:
             if footprint.clearance_to_points(pose, points, stop_below=0.0) <= 0.0:
                 return max(0.0, travelled - step)
         return cfg.headway_distance
+
+    @staticmethod
+    def _least_bad(options: Sequence[MotionOption]) -> Optional[MotionOption]:
+        """Best of a bad set: the motion that postpones contact the longest.
+
+        Used only when an obstacle is closing and no motion is collision-free
+        over the horizon - which happens when the approach speed simply exceeds
+        what the robot can escape. Holding position is not neutral in that
+        situation; it surrenders the separation the robot could still have
+        gained. Choosing the greatest time-to-contact maximises the opportunity
+        for the obstacle to stop or divert, and lowers the closing speed if it
+        does not.
+        """
+        best: Optional[MotionOption] = None
+        for option in options:
+            if best is None or option.collision_time > best.collision_time:
+                best = option
+        return best
 
     @staticmethod
     def _best(options: Sequence[MotionOption]) -> Optional[MotionOption]:

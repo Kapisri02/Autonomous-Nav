@@ -75,3 +75,47 @@ def test_max_obstacles_keeps_the_nearest():
 def test_every_point_belongs_to_some_cluster_for_a_simple_object():
     obstacles, filtered = detect(circles=[(1.5, 0.0, 0.25)])
     assert sum(len(o.points) for o in obstacles) == filtered.count
+
+
+def test_range_truncated_clusters_are_treated_as_structure():
+    """A cluster reaching the usable range is cut off, not small.
+
+    Its visible extent says nothing about its true size, and its centroid
+    migrates rapidly as the range gate sweeps along the surface. Left
+    unflagged, a wall at the edge of sensor range was classified as a moving
+    object at 0.75 m/s.
+    """
+    from beetlebot_risk_nav.core.params import LidarConfig
+    cfg = LidarConfig()
+    lidar = LidarFilter(cfg)
+    detector = ObstacleDetector()
+    # A short wall segment placed just inside the usable range.
+    scan = make_scan(walls=[(cfg.max_usable_range - 0.08, -0.30,
+                             cfg.max_usable_range - 0.08, 0.30)])
+    filtered = lidar.filter(scan)
+    plain = detector.detect(filtered)
+    flagged = detector.detect(filtered, truncation_range=cfg.max_usable_range,
+                              sensor_origin=(cfg.mount_offset_x, cfg.mount_offset_y))
+    assert plain and flagged
+    assert not any(o.is_structure for o in plain), 'extent alone should not flag it'
+    assert all(o.is_structure for o in flagged), 'truncated cluster must be structure'
+
+
+def test_truncation_test_is_applied_in_the_sensor_frame():
+    """Behind the robot the range gate bites sooner, because the sensor is forward.
+
+    Comparing chassis-frame ranges against a constant offset leaves rear
+    clusters unflagged, which is precisely where the gate acts first.
+    """
+    from beetlebot_risk_nav.core.params import LidarConfig
+    cfg = LidarConfig()
+    detector = ObstacleDetector()
+    # A wall astern, at a chassis-frame range inside the gate but a
+    # sensor-frame range at it.
+    behind = -(cfg.max_usable_range - cfg.mount_offset_x - 0.02)
+    scan = make_scan(walls=[(behind, -0.30, behind, 0.30)])
+    filtered = LidarFilter(cfg).filter(scan)
+    flagged = detector.detect(filtered, truncation_range=cfg.max_usable_range,
+                              sensor_origin=(cfg.mount_offset_x, cfg.mount_offset_y))
+    assert flagged
+    assert all(o.is_structure for o in flagged)

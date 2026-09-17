@@ -164,6 +164,10 @@ class RiskAssessment:
     closing_speed: float = 0.0
     critical_track_id: Optional[int] = None
     critical_bearing: float = 0.0
+    #: True when something is actively closing on the robot, as opposed to the
+    #: robot closing on it. Stopping does not resolve the former.
+    approaching: bool = False
+    max_closing_speed: float = 0.0
     reason: str = ''
 
     @property

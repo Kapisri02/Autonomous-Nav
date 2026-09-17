@@ -133,6 +133,12 @@ class ClusterConfig:
     # A connected run of points longer than this is structure (a wall, a bench)
     # rather than an object, and its apparent velocity is never believed.
     structure_extent: float = 0.80
+    # A cluster reaching the usable-range limit is CUT OFF, not small: its true
+    # extent continues beyond what the sensor reports. Its apparent length
+    # therefore says nothing about whether it is an object, and its centroid
+    # migrates rapidly as the range gate sweeps along the surface. Such
+    # clusters are treated as structure regardless of measured extent.
+    truncation_margin: float = 0.15  # m below the usable range that counts as cut off
 
 
 @dataclass
@@ -177,6 +183,11 @@ class RiskConfig:
     # falling to rear_weight directly behind. Without this a wall one metre
     # behind a forward-moving robot suppresses its speed for no reason.
     rear_weight: float = 0.10
+    # Closing speed above which a threat counts as APPROACHING. Halting is a
+    # sufficient response to a hazard the robot is driving into, but not to one
+    # that is driving into the robot: the gap keeps shrinking either way, so
+    # separation has to be created actively.
+    closing_speed_threshold: float = 0.10   # m/s
     # Speed scale applied at each level.
     scale_clear: float = 1.00
     scale_caution: float = 0.60

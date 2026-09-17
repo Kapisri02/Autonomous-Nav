@@ -27,7 +27,21 @@ class ObstacleDetector:
         self.config = config or ClusterConfig()
 
     # ------------------------------------------------------------------
-    def detect(self, scan: FilteredScan) -> List[Obstacle]:
+    def detect(self, scan: FilteredScan, truncation_range: Optional[float] = None,
+               sensor_origin: Point = (0.0, 0.0)) -> List[Obstacle]:
+        """Group scan points into obstacles.
+
+        ``truncation_range`` is the sensor's usable range, the distance beyond
+        which nothing is reported. A cluster reaching it is cut off rather than
+        small, so its measured extent cannot decide whether it is an object.
+
+        The test is applied in the SENSOR frame, which is why ``sensor_origin``
+        is needed: points arrive expressed about the chassis centre, and the
+        relationship between the two ranges depends on bearing. Treating it as
+        a constant offset leaves clusters behind the robot unflagged - exactly
+        where the range gate bites first, since the forward-mounted sensor is
+        further from anything astern.
+        """
         cfg = self.config
         n = scan.count
         if n == 0:
@@ -40,6 +54,11 @@ class ObstacleDetector:
                 continue
             extent = path_length(group)
             structure = extent >= cfg.structure_extent
+            if truncation_range is not None and not structure:
+                limit = truncation_range - cfg.truncation_margin
+                sx, sy = sensor_origin
+                if any(math.hypot(x - sx, y - sy) >= limit for x, y in group):
+                    structure = True
             for obstacle in self._split_oversized(group, scan.stamp):
                 obstacle.parent_extent = extent
                 obstacle.is_structure = structure
