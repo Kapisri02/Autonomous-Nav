@@ -53,9 +53,12 @@ def test_wall_is_flagged_as_structure_and_small_object_is_not():
 
 
 def test_min_distance_is_the_nearest_surface_point():
+    from beetlebot_risk_nav.core.params import LidarConfig
     obstacles, _ = detect(circles=[(2.0, 0.0, 0.3)])
     assert obstacles
-    assert min(o.min_distance for o in obstacles) == pytest.approx(1.7, abs=0.02)
+    # Measured from the chassis centre, which sits behind the sensor.
+    expected = 1.7 + LidarConfig().mount_offset_x
+    assert min(o.min_distance for o in obstacles) == pytest.approx(expected, abs=0.02)
 
 
 def test_max_obstacles_keeps_the_nearest():

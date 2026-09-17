@@ -79,6 +79,13 @@ class LidarFilter:
         points = [polar_to_cartesian(a, r) for a, r in zip(kept_ang, smoothed)]
         keep_flags = self._speckle_mask(points, smoothed, abs(scan.angle_increment))
 
+        # Translate into the chassis frame. Everything downstream - footprint
+        # checking, sector clearances, the rollout - then shares the frame whose
+        # origin is the centre of rotation. Angles and ranges are recomputed from
+        # the translated points so that no sensor-frame quantity leaks through.
+        mx, my = cfg.mount_offset_x, cfg.mount_offset_y
+        translate = (abs(mx) > 1e-9) or (abs(my) > 1e-9)
+
         step = max(1, int(cfg.decimation))
         survivors = 0
         for j, keep in enumerate(keep_flags):
@@ -90,9 +97,17 @@ class LidarFilter:
                 survivors += 1
                 continue
             survivors += 1
-            out.points.append(points[j])
-            out.angles.append(kept_ang[j])
-            out.ranges.append(smoothed[j])
+            px, py = points[j]
+            if translate:
+                px += mx
+                py += my
+                out.points.append((px, py))
+                out.angles.append(math.atan2(py, px))
+                out.ranges.append(math.hypot(px, py))
+            else:
+                out.points.append((px, py))
+                out.angles.append(kept_ang[j])
+                out.ranges.append(smoothed[j])
         return out
 
     # ------------------------------------------------------------------

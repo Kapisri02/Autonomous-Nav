@@ -16,6 +16,28 @@ from beetlebot_risk_nav.core.geometry import (inverse_transform_point,
 from beetlebot_risk_nav.core.params import RobotConfig
 
 
+def _footprint_centre(pose, robot):
+    """World position of the footprint centre for a given robot pose."""
+    x, y, th = pose
+    c, s = math.cos(th), math.sin(th)
+    ox, oy = robot.footprint_offset_x, robot.footprint_offset_y
+    return (x + c * ox - s * oy, y + s * ox + c * oy)
+
+
+def test_footprint_is_centred_on_the_rotation_centre():
+    """The footprint stays at the origin of the planning frame.
+
+    The sensor offset is applied to the scan points instead (LidarConfig.
+    mount_offset_x), so the footprint, the obstacle set and the rollout all
+    share the chassis frame. Displacing the footprint here would instead model
+    the robot as rotating about its LiDAR, which it does not.
+    """
+    from beetlebot_risk_nav.core.params import LidarConfig
+    robot = RobotConfig()
+    assert robot.footprint_offset_x == pytest.approx(0.0)
+    assert LidarConfig().mount_offset_x == pytest.approx(0.085)
+
+
 def test_rectangular_distance_matches_polygon_reference():
     checker = FootprintChecker(RobotConfig())
     rng = random.Random(1234)
@@ -29,6 +51,13 @@ def test_rectangular_distance_matches_polygon_reference():
 
 
 def test_circular_distance_matches_analytic_circle():
+    """The disc is centred on the chassis centre, not on the scan origin.
+
+    The LiDAR sits forward of the chassis centre, so the footprint - circular or
+    rectangular - is displaced by robot.footprint_offset_x in the scan frame.
+    The analytic expectation has to account for that displacement, otherwise it
+    silently assumes a sensor at the centre of the robot.
+    """
     robot = RobotConfig()
     robot.use_circular_footprint = True
     checker = FootprintChecker(robot)
@@ -37,7 +66,8 @@ def test_circular_distance_matches_analytic_circle():
     for _ in range(5000):
         pose = (rng.uniform(-2, 2), rng.uniform(-2, 2), rng.uniform(-math.pi, math.pi))
         point = (rng.uniform(-3, 3), rng.uniform(-3, 3))
-        expected = math.hypot(point[0] - pose[0], point[1] - pose[1]) - radius
+        centre = _footprint_centre(pose, robot)
+        expected = math.hypot(point[0] - centre[0], point[1] - centre[1]) - radius
         assert checker.distance_to_point(pose, point) == pytest.approx(expected, abs=1e-12)
 
 
@@ -60,10 +90,17 @@ def test_rotation_matters_for_a_non_circular_robot():
 
     This is the whole reason the footprint is not modelled as a disc.
     """
-    checker = FootprintChecker(RobotConfig())
-    point = (0.30, 0.0)                     # just ahead of the front edge
+    robot = RobotConfig()
+    checker = FootprintChecker(robot)
+    # A point on the chassis axis at a radius between the inscribed and
+    # circumscribed circles: beyond the flat face when the robot is square-on,
+    # but inside the region the corner sweeps through once it turns. A disc
+    # model of the robot cannot represent this distinction at all.
+    half_l = robot.half_length + robot.footprint_inflation
+    half_w = robot.half_width + robot.footprint_inflation
+    radius = 0.5 * (min(half_l, half_w) + math.hypot(half_l, half_w))
+    point = (robot.footprint_offset_x + radius, 0.0)
     assert checker.distance_to_point((0, 0, 0), point) > 0.0
-    # Turned 45 degrees, the same point falls inside the swept corner.
     assert checker.distance_to_point((0, 0, math.radians(45)), point) < 0.0
 
 

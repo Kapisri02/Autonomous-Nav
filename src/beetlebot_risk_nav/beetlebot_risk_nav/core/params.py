@@ -34,7 +34,13 @@ class RobotConfig:
     # use_circular_footprint is true, and as a cross-check otherwise.
     robot_radius: float = 0.22
     use_circular_footprint: bool = False
-    # Footprint centre relative to the LiDAR/base frame origin (+x forward).
+    # Footprint centre within the planning frame. This stays at the origin:
+    # scan points are translated into the chassis frame by the filter (see
+    # LidarConfig.mount_offset_x), so the footprint, the rotation centre and
+    # the obstacle set all share one frame. Displacing the footprint here
+    # instead would make the rollout rotate the robot about the SENSOR rather
+    # than about its chassis centre, which measurably degraded the ability to
+    # turn past an obstacle.
     footprint_offset_x: float = 0.0
     footprint_offset_y: float = 0.0
     # Preferred safety margin around the footprint, metres.
@@ -103,6 +109,13 @@ class LidarConfig:
     # trusted. Absence of data is not evidence of clear space: an empty or
     # mostly-NaN scan must stop the robot, not licence it to drive at speed.
     min_valid_fraction: float = 0.50
+    # Position of the LiDAR relative to the chassis centre, metres. The
+    # RPLiDAR C1 is mounted laterally centred, 0.085 m forward and 0.206 m
+    # above the floor. Points are translated by this offset so that planning,
+    # collision checking and the rollout all work in the chassis frame, whose
+    # origin is the robot's centre of rotation.
+    mount_offset_x: float = 0.085
+    mount_offset_y: float = 0.0
     field_of_view: float = 2.0 * math.pi
 
 

@@ -52,7 +52,9 @@ def test_median_filter_never_pushes_an_obstacle_further_away():
     ranges = [3.0] * 36
     ranges[18] = 0.40
     result = LidarFilter().filter(scan_from(ranges))
-    assert result.min_range() == pytest.approx(0.40)
+    # Ranges are reported in the chassis frame, so a return 0.40 m ahead of the
+    # sensor lies 0.40 + mount_offset_x from the centre of rotation.
+    assert result.min_range() == pytest.approx(0.40 + LidarConfig().mount_offset_x)
 
 
 def test_close_lone_returns_are_never_discarded_as_speckle():
@@ -60,7 +62,8 @@ def test_close_lone_returns_are_never_discarded_as_speckle():
     ranges = [3.0] * 36
     ranges[18] = cfg.speckle_min_range - 0.05
     result = LidarFilter().filter(scan_from(ranges))
-    assert result.min_range() == pytest.approx(cfg.speckle_min_range - 0.05)
+    assert result.min_range() == pytest.approx(
+        cfg.speckle_min_range - 0.05 + cfg.mount_offset_x)
 
 
 def test_coarse_scan_is_not_entirely_discarded():
@@ -81,7 +84,9 @@ def test_isolated_far_return_is_rejected_as_speckle():
     ranges[180] = 1.2
     result = LidarFilter().filter(scan_from(ranges))
     assert result.rejected['speckle'] >= 1
-    assert result.min_range() == pytest.approx(3.0)
+    # Nearest surviving return is the background behind the robot, which the
+    # forward sensor offset brings closer to the chassis centre.
+    assert result.min_range() == pytest.approx(3.0 - LidarConfig().mount_offset_x)
 
 
 def test_points_are_consistent_with_ranges_and_angles():
@@ -114,10 +119,26 @@ def test_decimation_reduces_point_count():
     assert sparse < dense
 
 
+def test_points_are_translated_into_the_chassis_frame():
+    """A return ahead of the sensor is further from the chassis centre.
+
+    The LiDAR sits 0.085 m forward of the centre of rotation, so a reading of
+    1.000 m straight ahead is 1.085 m from the chassis centre and a reading
+    directly behind is 0.915 m.
+    """
+    cfg = LidarConfig()
+    result = LidarFilter(cfg).filter(scan_from([1.0] * 360))
+    ahead = min(r for a, r in zip(result.angles, result.ranges) if abs(a) < 0.02)
+    behind = min(r for a, r in zip(result.angles, result.ranges)
+                 if abs(abs(a) - math.pi) < 0.02)
+    assert ahead == pytest.approx(1.0 + cfg.mount_offset_x, abs=1e-3)
+    assert behind == pytest.approx(1.0 - cfg.mount_offset_x, abs=1e-3)
+
+
 def test_sector_minimum_is_directional():
     scan = make_scan(circles=[(1.0, 0.0, 0.2)], background=6.0)
     filtered = LidarFilter().filter(scan)
     ahead = sector_minimum(filtered, 0.0, math.radians(20))
     behind = sector_minimum(filtered, math.pi, math.radians(20))
-    assert ahead == pytest.approx(0.8, abs=0.05)
+    assert ahead == pytest.approx(0.8 + LidarConfig().mount_offset_x, abs=0.05)
     assert behind > 3.0
