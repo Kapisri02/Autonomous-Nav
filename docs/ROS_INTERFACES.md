@@ -2,7 +2,9 @@
 
 What this package expects from the rest of the system, and what it provides.
 Anything listed as an assumption has **not** been verified against a running
-robot from this development environment - there is no ROS here.
+robot. The package has since been run against a Gazebo Harmonic simulation of
+the BeetleBot built to VEEROBOT's published dimensions - see
+[SIMULATION.md](SIMULATION.md) for what that did and did not establish.
 
 ## Subscriptions
 
@@ -41,7 +43,12 @@ silently interpreted in the wrong frame would send the robot to the wrong place.
 | `robot_radius` | 0.22 m | the robot's own `nav2_params.yaml` |
 | Chassis | 0.375 m x 0.360 m | official VEEROBOT documentation |
 | Compute | Raspberry Pi 5 | VEEROBOT documentation |
-| LiDAR | RPLiDAR C1, 360 degrees | VEEROBOT documentation |
+| LiDAR | RPLiDAR C1, 360 degrees, 12 m, 10 Hz, ~0.5 deg | VEEROBOT documentation |
+| LiDAR mounting | 8.5 cm forward of centre, 20.6 cm above floor | VEEROBOT documentation (two pages) |
+| Drive | 4-wheel skid-steer | VEEROBOT documentation |
+| Chassis, weight | 375 x 360 x 245 mm, ~2.2 kg | VEEROBOT documentation |
+| Max speed / clamp | 1.0 m/s; firmware clamps 1.0 m/s and 2.0 rad/s | VEEROBOT documentation |
+| Wheels | 130 mm diameter, 290 mm track, 181 mm wheelbase | VEEROBOT documentation |
 | ROS | 2 Jazzy | VEEROBOT documentation |
 
 The rectangular footprint is used by default because the chassis is nearly
@@ -50,10 +57,19 @@ square and the exact rectangle costs no more to evaluate than a disc. Set
 
 ## Assumptions still to confirm on the robot
 
-1. **The LiDAR frame is the robot's centre of rotation.** If it is mounted
-   forward or aft, set `robot.footprint_offset_x` to the offset, otherwise the
-   footprint is checked in the wrong place. This is the assumption most likely
-   to matter.
+1. ~~The LiDAR frame is the robot's centre of rotation.~~ **Resolved - this is
+   no longer an assumption.** VEEROBOT documents the RPLiDAR C1 as 8.5 cm
+   forward of the chassis centre and 20.6 cm above the floor, on two separate
+   pages (Hardware Familiarization; Sensor Data Visualization). Those are the
+   values in `lidar.mount_offset_x` / the 0.206 m height, and the scan is
+   translated into the chassis frame by that offset.
+
+   Note the knob: it is **`lidar.mount_offset_x`**, not
+   `robot.footprint_offset_x`. Earlier revisions of this document named the
+   latter; that is wrong, and `params.py` explains why - displacing the
+   footprint models the robot as rotating about its LiDAR instead of its
+   chassis centre, which measurably degraded its ability to turn past an
+   obstacle.
 2. **`/scan` angles follow the ROS convention** (0 straight ahead, positive to
    the left). The preserved baseline assumes the same thing and works, which is
    good evidence, but it has not been confirmed directly.

@@ -74,3 +74,42 @@ def test_circular_footprint_uses_nav2_radius():
     expected = cfg.robot.robot_radius + cfg.robot.footprint_inflation
     assert cfg.robot.circumscribed_radius == pytest.approx(expected)
     assert cfg.robot.inscribed_radius == pytest.approx(expected)
+
+
+def test_packaged_yaml_matches_the_dataclass_defaults():
+    """The shipped YAML and NavConfig must agree, key for key and value for value.
+
+    The YAML's own header says it is generated from NavConfig "so the two cannot
+    drift apart", and the README repeats the claim - but nothing enforced it, and
+    they had drifted: four keys were missing from the file, one of them
+    ``lidar.mount_offset_x``, the LiDAR mounting offset. A parameter absent from
+    the file cannot be found or changed by someone reading it, which for a
+    physical-mounting value is a safety-relevant omission rather than a typo.
+    """
+    import os
+    import yaml
+
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    path = os.path.join(here, 'src', 'beetlebot_risk_nav', 'config',
+                        'beetlebot_nav.yaml')
+    with open(path) as handle:
+        loaded = yaml.safe_load(handle)['beetlebot_nav']['ros__parameters']
+
+    # The node declares these separately from NavConfig; see the node's
+    # __init__. Everything else in the file must be a NavConfig field.
+    interface_keys = {
+        'scan_topic', 'odom_topic', 'goal_topic', 'cmd_vel_topic',
+        'global_frame', 'base_frame', 'odom_frame', 'control_frequency',
+        'use_tf', 'publish_status', 'use_sim_time',
+    }
+    from_file = {key: value for key, value in flatten(loaded).items()
+                 if key not in interface_keys}
+    defaults = NavConfig().to_flat()
+
+    assert set(from_file) == set(defaults), (
+        'missing from the YAML: {}; unknown in the YAML: {}'.format(
+            sorted(set(defaults) - set(from_file)),
+            sorted(set(from_file) - set(defaults))))
+    for key, value in defaults.items():
+        assert from_file[key] == pytest.approx(value) if isinstance(value, float) \
+            else from_file[key] == value, key

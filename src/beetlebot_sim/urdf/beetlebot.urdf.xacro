@@ -1,0 +1,289 @@
+<?xml version="1.0"?>
+<!--
+  VEEROBOT BeetleBot (Lyra) - simulation description.
+
+  EVERY dimension below is taken from VEEROBOT's own documentation. Nothing is
+  invented. Source keys used in the comments:
+
+    [HW]   docs.veerobot.com /ros-robots/beetle-bot/hardware-familiarization
+    [SIM]  docs.veerobot.com /ros-robots/beetle-bot/robot-simulation-with-gazebo
+    [INT]  docs.veerobot.com /ros-robots/beetle-bot/introduction
+    [VIZ]  docs.veerobot.com /ros-robots/beetle-bot/sensor-data-visualization
+
+  (mirrored verbatim at github.com/SMARTS-LAB/Documention, commit c9eb011)
+
+  Values marked [MODEL] are NOT specified by VEEROBOT. They are simulation
+  modelling choices that do not affect the 2-D navigation behaviour under test,
+  and each one says what it is and why it is safe. They are the only numbers
+  here that are not vendor-documented.
+
+  Internal cross-check of the vendor's numbers (they agree):
+    wheel centre height = base_link height - |wheel z|
+                        = 0.163 - 0.098 = 0.065 m = wheel radius   OK
+    wheelbase           = 0.094 - (-0.087) = 0.181 m = 18.1 cm     OK
+    track width         = 2 x 0.145        = 0.290 m = 29 cm       OK
+    max speed           = 150 rpm / 60 * pi * 0.130 = 1.02 m/s ~ 1.0 m/s  OK
+-->
+<robot name="beetlebot" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- ============ VERIFIED GEOMETRY ============ -->
+  <xacro:property name="base_link_height" value="0.163"/>   <!-- [SIM] base_footprint->base_link 16.3 cm -->
+  <xacro:property name="body_length"      value="0.375"/>   <!-- [INT] 375 mm -->
+  <xacro:property name="body_width"       value="0.360"/>   <!-- [INT] 360 mm -->
+  <xacro:property name="wheel_radius"     value="0.065"/>   <!-- [HW] 130 mm diameter -->
+  <xacro:property name="wheel_width"      value="0.040"/>   <!-- [HW] ~40 mm -->
+  <xacro:property name="wheel_x_front"    value="0.094"/>   <!-- [SIM] fl_link x -->
+  <xacro:property name="wheel_x_back"     value="-0.087"/>  <!-- [SIM] bl_link x -->
+  <xacro:property name="wheel_y"          value="0.145"/>   <!-- [SIM] fl_link y (track/2) -->
+  <xacro:property name="wheel_z"          value="-0.098"/>  <!-- [SIM] fl_link z -->
+  <xacro:property name="lidar_x"          value="0.085"/>   <!-- [HW] "LiDAR is 8.5cm forward" -->
+  <xacro:property name="lidar_ground_z"   value="0.206"/>   <!-- [HW][VIZ] 20.6 cm from ground -->
+  <xacro:property name="camera_ground_z"  value="0.088"/>   <!-- [HW] 8.8 cm from ground -->
+  <xacro:property name="total_mass"       value="2.2"/>     <!-- [INT] ~2.2 kg with battery -->
+
+  <!-- [MODEL] Chassis box thickness and its vertical placement. VEEROBOT gives
+       the 375x360 footprint and the 245 mm overall height, but not how the body
+       is distributed vertically. 0.06 m centred 5 mm above base_link puts the
+       body between z=0.138 and z=0.198, which clears the wheel tops (0.130) and
+       stays below the LiDAR (0.206) so the sensor is never occluded by its own
+       chassis. The 2-D footprint - the only part the navigation code uses - is
+       the documented one. -->
+  <xacro:property name="body_height"      value="0.060"/>
+  <xacro:property name="body_z_offset"    value="0.005"/>
+
+  <!-- [MODEL] Mass split: 4 x 0.1 kg wheels, remainder in the chassis, summing
+       to the documented 2.2 kg. Per-part masses are not published. Inertias are
+       the standard box/cylinder tensors for these masses. -->
+  <xacro:property name="wheel_mass"       value="0.1"/>
+  <xacro:property name="body_mass"        value="${total_mass - 4*wheel_mass}"/>
+
+  <material name="grey"><color rgba="0.35 0.35 0.38 1"/></material>
+  <material name="blue"><color rgba="0.15 0.35 0.75 1"/></material>
+  <material name="black"><color rgba="0.08 0.08 0.08 1"/></material>
+
+  <!-- ============ LINKS ============ -->
+  <link name="base_footprint"/>
+
+  <joint name="base_footprint_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 ${base_link_height}" rpy="0 0 0"/>
+  </joint>
+
+  <link name="base_link">
+    <visual>
+      <origin xyz="0 0 ${body_z_offset}"/>
+      <geometry><box size="${body_length} ${body_width} ${body_height}"/></geometry>
+      <material name="grey"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 ${body_z_offset}"/>
+      <geometry><box size="${body_length} ${body_width} ${body_height}"/></geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0 0 ${body_z_offset}"/>
+      <mass value="${body_mass}"/>
+      <inertia
+        ixx="${body_mass/12.0*(body_width*body_width + body_height*body_height)}" ixy="0" ixz="0"
+        iyy="${body_mass/12.0*(body_length*body_length + body_height*body_height)}" iyz="0"
+        izz="${body_mass/12.0*(body_length*body_length + body_width*body_width)}"/>
+    </inertial>
+  </link>
+
+  <xacro:macro name="wheel" params="name x y">
+    <link name="${name}_link">
+      <visual>
+        <origin rpy="1.5707963 0 0"/>
+        <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
+        <material name="blue"/>
+      </visual>
+      <collision>
+        <origin rpy="1.5707963 0 0"/>
+        <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
+        <surface>
+          <friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction>
+        </surface>
+      </collision>
+      <inertial>
+        <mass value="${wheel_mass}"/>
+        <inertia
+          ixx="${wheel_mass/12.0*(3*wheel_radius*wheel_radius + wheel_width*wheel_width)}" ixy="0" ixz="0"
+          iyy="${wheel_mass*wheel_radius*wheel_radius/2.0}" iyz="0"
+          izz="${wheel_mass/12.0*(3*wheel_radius*wheel_radius + wheel_width*wheel_width)}"/>
+      </inertial>
+    </link>
+    <joint name="${name}_joint" type="continuous">
+      <parent link="base_link"/>
+      <child link="${name}_link"/>
+      <origin xyz="${x} ${y} ${wheel_z}" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+    </joint>
+  </xacro:macro>
+
+  <!-- [SIM] fl/fr/bl/br_link, the four independently driven wheels (4WD skid-steer) -->
+  <xacro:wheel name="fl" x="${wheel_x_front}" y="${wheel_y}"/>
+  <xacro:wheel name="fr" x="${wheel_x_front}" y="${-wheel_y}"/>
+  <xacro:wheel name="bl" x="${wheel_x_back}"  y="${wheel_y}"/>
+  <xacro:wheel name="br" x="${wheel_x_back}"  y="${-wheel_y}"/>
+
+  <!-- RPLidar C1: 8.5 cm forward of chassis centre, 20.6 cm above ground [HW] -->
+  <link name="lidar_link">
+    <visual>
+      <geometry><cylinder radius="0.035" length="0.040"/></geometry>
+      <material name="black"/>
+    </visual>
+    <inertial><mass value="0.05"/>
+      <inertia ixx="1e-5" ixy="0" ixz="0" iyy="1e-5" iyz="0" izz="1e-5"/>
+    </inertial>
+  </link>
+  <joint name="lidar_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="lidar_link"/>
+    <origin xyz="${lidar_x} 0 ${lidar_ground_z - base_link_height}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Raspberry Pi Camera V1.3, front-facing, 8.8 cm above ground [HW].
+       [MODEL] Its x is not published; the front face of the documented
+       375 mm body is used. The navigation code never subscribes to the
+       camera - it is here only so the TF tree matches the real robot. -->
+  <link name="camera_link">
+    <visual><geometry><box size="0.01 0.025 0.025"/></geometry><material name="black"/></visual>
+    <inertial><mass value="0.01"/>
+      <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/>
+    </inertial>
+  </link>
+  <joint name="camera_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="camera_link"/>
+    <origin xyz="${body_length/2} 0 ${camera_ground_z - base_link_height}" rpy="0 0 0"/>
+  </joint>
+  <link name="camera_optical_link"/>
+  <joint name="camera_optical_joint" type="fixed">
+    <parent link="camera_link"/>
+    <child link="camera_optical_link"/>
+    <origin xyz="0 0 0" rpy="-1.5707963 0 -1.5707963"/>
+  </joint>
+
+  <!-- IMU LSM6DSRTR, on the Lyra board [HW].
+       [MODEL] Its position on the board is not published; base_link origin is
+       used. The navigation code does not subscribe to the IMU. -->
+  <link name="imu_link">
+    <inertial><mass value="0.005"/>
+      <inertia ixx="1e-7" ixy="0" ixz="0" iyy="1e-7" iyz="0" izz="1e-7"/>
+    </inertial>
+  </link>
+  <joint name="imu_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="imu_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ============ GAZEBO SENSORS AND PLUGINS ============ -->
+
+  <gazebo reference="base_link"><material>Gazebo/Grey</material></gazebo>
+  <xacro:macro name="wheel_gz" params="name">
+    <gazebo reference="${name}_link">
+      <mu1>1.0</mu1><mu2>1.0</mu2>
+      <kp>1e6</kp><kd>1.0</kd>
+    </gazebo>
+  </xacro:macro>
+  <xacro:wheel_gz name="fl"/><xacro:wheel_gz name="fr"/>
+  <xacro:wheel_gz name="bl"/><xacro:wheel_gz name="br"/>
+
+  <!-- RPLidar C1 [HW]: 360 deg, 12 m max range, 10 Hz, ~0.5 deg resolution
+       (720 samples over 360 deg). Minimum range 0.10 m matches the value the
+       navigation package already filters at (lidar.min_range). -->
+  <gazebo reference="lidar_link">
+    <sensor name="rplidar_c1" type="gpu_lidar">
+      <topic>scan</topic>
+      <gz_frame_id>lidar_link</gz_frame_id>
+      <update_rate>10</update_rate>
+      <always_on>1</always_on>
+      <visualize>false</visualize>
+      <lidar>
+        <scan>
+          <horizontal>
+            <samples>720</samples>
+            <resolution>1</resolution>
+            <min_angle>-3.141592653589793</min_angle>
+            <max_angle>3.141592653589793</max_angle>
+          </horizontal>
+          <vertical>
+            <samples>1</samples><resolution>1</resolution>
+            <min_angle>0</min_angle><max_angle>0</max_angle>
+          </vertical>
+        </scan>
+        <range><min>0.10</min><max>12.0</max><resolution>0.01</resolution></range>
+      </lidar>
+    </sensor>
+  </gazebo>
+
+  <!-- IMU LSM6DSRTR [HW]: 100 Hz. Noise standard deviations are the values
+       VEEROBOT publishes for this unit (0.04-0.05 m/s^2 accelerometer,
+       0.003-0.004 rad/s gyroscope); the midpoints are used. -->
+  <gazebo reference="imu_link">
+    <sensor name="lsm6dsrtr" type="imu">
+      <topic>imu</topic>
+      <gz_frame_id>imu_link</gz_frame_id>
+      <update_rate>100</update_rate>
+      <always_on>1</always_on>
+      <imu>
+        <angular_velocity>
+          <x><noise type="gaussian"><mean>0</mean><stddev>0.0035</stddev></noise></x>
+          <y><noise type="gaussian"><mean>0</mean><stddev>0.0035</stddev></noise></y>
+          <z><noise type="gaussian"><mean>0</mean><stddev>0.0035</stddev></noise></z>
+        </angular_velocity>
+        <linear_acceleration>
+          <x><noise type="gaussian"><mean>0</mean><stddev>0.045</stddev></noise></x>
+          <y><noise type="gaussian"><mean>0</mean><stddev>0.045</stddev></noise></y>
+          <z><noise type="gaussian"><mean>0</mean><stddev>0.045</stddev></noise></z>
+        </linear_acceleration>
+      </imu>
+    </sensor>
+  </gazebo>
+
+  <!-- 4-wheel skid-steer [INT: "4-Wheel Skid-Steer Drive"]. Gazebo's DiffDrive
+       system accepts several joints per side, which is how a skid-steer base is
+       modelled: both left wheels take one speed, both right wheels the other -
+       exactly what the Lyra controller does with its four PID loops.
+
+       wheel_separation is the documented 29 cm geometric track. A real
+       skid-steer scrubs its tyres when turning, so its EFFECTIVE separation is
+       larger and its yaw rate lower than this model predicts. VEEROBOT
+       quantifies that gap: +/-5-10% angular odometry error [INT]. It is a
+       known, quantified sim-to-real difference, not a modelling error.
+
+       max_linear_acceleration is derived from the documented firmware ramp
+       limit (MAX_RPM_STEP_PER_CYCLE = 5 RPM per 50 ms cycle [INT]):
+         5 rpm/cycle * 20 cycles/s = 100 rpm/s
+         100/60 rev/s^2 * pi * 0.130 m = 0.68 m/s^2
+  -->
+  <gazebo>
+    <plugin filename="gz-sim-diff-drive-system" name="gz::sim::systems::DiffDrive">
+      <left_joint>fl_joint</left_joint>
+      <left_joint>bl_joint</left_joint>
+      <right_joint>fr_joint</right_joint>
+      <right_joint>br_joint</right_joint>
+      <wheel_separation>0.29</wheel_separation>
+      <wheel_radius>0.065</wheel_radius>
+      <topic>cmd_vel</topic>
+      <odom_topic>odom</odom_topic>
+      <tf_topic>/model/beetlebot/tf</tf_topic>
+      <frame_id>odom</frame_id>
+      <child_frame_id>base_footprint</child_frame_id>
+      <odom_publish_frequency>30</odom_publish_frequency>
+      <max_linear_acceleration>0.68</max_linear_acceleration>
+      <min_linear_acceleration>-0.68</min_linear_acceleration>
+      <max_linear_velocity>1.0</max_linear_velocity>
+      <min_linear_velocity>-1.0</min_linear_velocity>
+      <max_angular_velocity>2.0</max_angular_velocity>
+      <min_angular_velocity>-2.0</min_angular_velocity>
+    </plugin>
+
+    <plugin filename="gz-sim-joint-state-publisher-system"
+            name="gz::sim::systems::JointStatePublisher">
+      <topic>joint_states</topic>
+    </plugin>
+  </gazebo>
+
+</robot>

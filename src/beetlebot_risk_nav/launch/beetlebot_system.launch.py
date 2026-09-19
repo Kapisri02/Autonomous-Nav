@@ -58,6 +58,8 @@ def generate_launch_description():
         DeclareLaunchArgument('base_frame', default_value='base_link'),
         DeclareLaunchArgument('use_tf', default_value='true'),
         DeclareLaunchArgument('log_level', default_value='info'),
+        DeclareLaunchArgument('use_sim_time', default_value='false',
+                              description='Follow /clock instead of the wall clock.'),
     ]
 
     endpoint_selection = IncludeLaunchDescription(
@@ -78,6 +80,7 @@ def generate_launch_description():
             'base_frame': LaunchConfiguration('base_frame'),
             'use_tf': LaunchConfiguration('use_tf'),
             'log_level': LaunchConfiguration('log_level'),
+            'use_sim_time': LaunchConfiguration('use_sim_time'),
         }.items(),
     )
 

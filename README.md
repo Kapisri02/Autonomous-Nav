@@ -52,12 +52,21 @@ Priority is fixed: **safety > obstacle avoidance > goal progress**.
 
 ## Status
 
-Software-complete and software-tested. **Not yet validated on the physical
-robot** - see [PROJECT_STATUS.md](PROJECT_STATUS.md).
+Software-complete, software-tested, and **validated against a Gazebo Harmonic
+simulation of the BeetleBot** built to VEEROBOT's published dimensions. **Not
+yet validated on the physical robot** - see
+[PROJECT_STATUS.md](PROJECT_STATUS.md).
 
-All results in this repository come from unit and integration tests against
-deterministic synthetic inputs. There is no simulator here, and no claim is made
-about physical behaviour.
+The simulation drove this code to goals in an empty room, past static
+obstacles, along a corridor through a 1.2 m doorway, and across a cluttered
+room, in both the odometry frame and the map frame under AMCL. It also found a
+configuration defect that stalls the robot in front of obstacles it has room to
+avoid. Read [docs/SIMULATION.md](docs/SIMULATION.md) before the first physical
+run - in particular the two integration steps (`/cmd_vel_nav` routing, and
+arming the motors) that will otherwise leave the robot motionless with nothing
+in the logs to explain it.
+
+No claim is made about physical behaviour.
 
 ---
 
@@ -83,18 +92,56 @@ it can be tested anywhere and runs unchanged on the robot. Only
 
 ## The workspace
 
-One workspace, two ROS packages:
+One workspace, three ROS packages:
 
 ```
 ~/beetlebot_ws/src/
 ├── map_selection_test/     map display + endpoint selection (publishes /map,
 │                           reports the pose picked in RViz)
-└── beetlebot_risk_nav/     autonomous navigation (drives to the goal, avoids
-                            obstacles, publishes /cmd_vel_nav)
+├── beetlebot_risk_nav/     autonomous navigation (drives to the goal, avoids
+│                           obstacles, publishes /cmd_vel_nav)
+└── beetlebot_sim/          Gazebo BeetleBot, for running the above without the
+                            robot. Never needed on the robot itself.
 ```
 
 They share no code. `map_selection_test` logs the selected point; the navigation
 node subscribes to `/goal_pose` itself and drives there. Either can run alone.
+
+## Trying it without the robot
+
+```bash
+# one-off: Gazebo Harmonic and the ROS bridge
+sudo apt install gz-harmonic ros-jazzy-ros-gz -y
+
+source install/setup.bash
+ros2 launch beetlebot_sim beetlebot_sim_nav.launch.py \
+    world:=beetlebot_obstacles global_frame:=odom
+```
+
+On a machine with no GPU or display, prefix with `xvfb-run -a`. Worlds:
+`beetlebot_empty`, `beetlebot_obstacles`, `beetlebot_corridor`,
+`beetlebot_clutter`, `beetlebot_confined`. Add `gui:=true` to watch it.
+
+To exercise the map frame with real localisation instead of raw odometry:
+
+```bash
+ros2 launch beetlebot_sim beetlebot_sim_nav.launch.py \
+    world:=beetlebot_corridor global_frame:=map localisation:=amcl \
+    map:=$(ros2 pkg prefix beetlebot_sim)/share/beetlebot_sim/maps/corridor.yaml
+```
+
+Then publish a goal as RViz would:
+
+```bash
+ros2 topic pub --once /goal_pose geometry_msgs/PoseStamped \
+  '{header: {frame_id: "odom"}, pose: {position: {x: 3.0, y: 0.0}}}'
+```
+
+`beetlebot_sim` stands in for the robot's own bringup: it provides `/scan`,
+`/odom`, `/imu/data_raw`, TF and a skid-steer drive consuming `/cmd_vel_nav`.
+The navigation package is not modified to suit it.
+
+---
 
 ## Installation
 
@@ -115,8 +162,8 @@ rosdep install --from-paths src --ignore-src -r -y     # pulls python3-yaml, pyt
 colcon build --symlink-install
 source install/setup.bash
 
-# Both packages must appear:
-ros2 pkg list | grep -E "beetlebot_risk_nav|map_selection_test"
+# All three packages must appear:
+ros2 pkg list | grep -E "beetlebot_risk_nav|map_selection_test|beetlebot_sim"
 ```
 
 **No symlinks are needed, and you should not create any.** colcon crawls
@@ -295,10 +342,18 @@ Check `/beetlebot_nav/status`. Common causes:
   on data it does not have.
 - `SENSOR_FAULT` - scans or odometry stopped arriving. Check the bringup terminal.
 
-**It stops well short of obstacles.**
-That is the risk envelope doing its job. If it is too cautious for your space,
-raise `risk.caution_distance` and `risk.danger_distance`. Do not reduce
-`robot.footprint_*` - those describe the physical robot.
+**It stops well short of obstacles, or stops and waits in front of one it could
+drive around.**
+The second is a known defect, reproduced in simulation: at `DANGER` the speed
+cap shrinks the planner's 3 s rollout to 0.18 m, which is less than the robot's
+own inflated front overhang, so no turn can show a gain and the planner falls
+back to `stop`. Raise `planner.sim_time` to 6.0, or `velocity.scale_danger` to
+0.6 - each was verified to fix it. Both carry more speed toward obstacles, so
+the choice is yours; see [docs/SIMULATION.md](docs/SIMULATION.md).
+
+Do not reduce `robot.footprint_*` - those describe the physical robot. If the
+LiDAR is not where the code thinks, the knob is `lidar.mount_offset_x`
+(documented as 0.085 m forward), not `robot.footprint_offset_x`.
 
 **It stops and will not restart.**
 Look for `EMERGENCY_STOP` in the status. It releases once there is
@@ -357,6 +412,10 @@ port of its logic for side-by-side comparison.
 
 ```
 baseline/lyra_control/obstacle_avoidance.py   preserved original
+src/beetlebot_sim/                            ROS package: Gazebo BeetleBot model
+  urdf/beetlebot.urdf.xacro     every dimension cites its VEEROBOT source
+  worlds/                       empty, obstacles, corridor, clutter, confined
+  maps/corridor.*               occupancy map for the AMCL localisation test
 src/beetlebot_risk_nav/                       ROS package: autonomous navigation
   beetlebot_risk_nav/core/      pure-Python decision core (no ROS, no NumPy)
   beetlebot_risk_nav/nodes/     ROS 2 adapter
@@ -371,4 +430,5 @@ scripts/run_tests.sh            build + lint + tests
 scripts/analyze_log.py          summarise a run
 scripts/compare_baseline.py     baseline vs new system
 docs/ROS_INTERFACES.md          topics, frames, and assumptions
+docs/SIMULATION.md              simulation results and the hardware audit
 ```
