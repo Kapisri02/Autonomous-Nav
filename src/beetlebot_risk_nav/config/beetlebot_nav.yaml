@@ -49,7 +49,13 @@ beetlebot_nav:
       speckle_min_range: 0.5
       decimation: 1
       min_valid_fraction: 0.5
-      field_of_view: 6.283185
+      # VERIFIED: the RPLiDAR C1 sits 8.5 cm forward of the chassis centre and
+      # 20.6 cm above the floor (VEEROBOT hardware documentation). Scan points
+      # are translated by this offset so that planning and collision checking
+      # happen in the chassis frame, whose origin is the centre of rotation.
+      mount_offset_x: 0.085
+      mount_offset_y: 0.0
+      field_of_view: 6.283185307179586
 
     cluster:
       base_threshold: 0.1
@@ -58,6 +64,7 @@ beetlebot_nav:
       max_cluster_radius: 0.12
       max_obstacles: 150
       structure_extent: 0.8
+      truncation_margin: 0.15
 
     tracker:
       association_gate: 0.45
@@ -80,6 +87,7 @@ beetlebot_nav:
       danger_ttc: 2.0
       critical_ttc: 0.8
       rear_weight: 0.1
+      closing_speed_threshold: 0.1
       scale_clear: 1.0
       scale_caution: 0.6
       scale_danger: 0.3

@@ -10,7 +10,8 @@ obstacles, stop within tolerance, and report SUCCESS.
 | **Git checkpoint** | `final-software-ready` (Phase 3); Phase 4 on the branch |
 | **GitHub push status** | branch pushed; **tag pushes blocked by policy (HTTP 403)** - see below |
 | **Physical validation** | **NOT PERFORMED** (robot untouched) |
-| **Real ROS 2 validation** | **PARTIAL - both nodes launch and their interfaces are confirmed on ROS 2 Jazzy** |
+| **Real ROS 2 validation** | **both nodes launch; interfaces confirmed on ROS 2 Jazzy** |
+| **Simulation validation** | **DONE - Gazebo Harmonic BeetleBot; goals reached in odom and map frames. See [docs/SIMULATION.md](docs/SIMULATION.md)** |
 
 ---
 
@@ -218,9 +219,16 @@ Found by running the code, not by inspection:
 - **Nothing ROS has been executed.** No ROS in this environment: `colcon build`,
   node launch, TF, QoS and message transport are unverified. The node is tested
   against stubs, which exercises our code but not ROS.
-- **The LiDAR is assumed to be at the centre of rotation.** If it is mounted
-  forward or aft, set `robot.footprint_offset_x`. This is the assumption most
-  likely to matter physically - see `docs/ROS_INTERFACES.md`.
+- ~~The LiDAR is assumed to be at the centre of rotation.~~ **Resolved.**
+  VEEROBOT documents it 8.5 cm forward, 20.6 cm up, on two separate pages; the
+  code already carries those values in `lidar.mount_offset_x`. The knob is
+  `lidar.mount_offset_x`, **not** `robot.footprint_offset_x`.
+- **Three of five simulated scenario types stall in the shipped
+  configuration**, because the risk-limited speed shrinks the planner's rollout
+  to 0.18 m - shorter than the robot's own inflated front overhang. Raising
+  `planner.sim_time` to 6.0 or `velocity.scale_danger` to 0.6 fixes it. Not
+  changed by default: both carry more speed toward obstacles, which is a
+  physical-safety decision. See [docs/SIMULATION.md](docs/SIMULATION.md).
 - A moving obstacle's current scan points stay in the static set for the length of
   the rollout, so the robot gives a slightly wider berth than strictly necessary.
   Deliberate: a mis-estimated velocity then cannot open a hole in the check.
