@@ -39,6 +39,10 @@ def generate_launch_description():
         DeclareLaunchArgument('use_tf', default_value='true',
                               description='Use TF for the robot pose; false uses odometry only.'),
         DeclareLaunchArgument('log_level', default_value='info'),
+        # Needed to run against a simulator, which publishes /clock.
+        # Defaults to false, so behaviour on the robot is unchanged.
+        DeclareLaunchArgument('use_sim_time', default_value='false',
+                              description='Follow /clock instead of the wall clock.'),
     ]
 
     node = Node(
@@ -57,6 +61,7 @@ def generate_launch_description():
                 'global_frame': LaunchConfiguration('global_frame'),
                 'base_frame': LaunchConfiguration('base_frame'),
                 'use_tf': LaunchConfiguration('use_tf'),
+                'use_sim_time': LaunchConfiguration('use_sim_time'),
             },
         ],
         arguments=['--ros-args', '--log-level', LaunchConfiguration('log_level')],

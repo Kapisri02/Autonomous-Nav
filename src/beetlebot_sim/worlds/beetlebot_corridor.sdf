@@ -1,0 +1,79 @@
+<?xml version="1.0"?>
+<!-- BeetleBot simulation world: 3 m wide corridor with a doorway and a bend
+     Obstacles are 0.5 m tall so they are seen by the RPLidar C1 at its
+     documented 0.206 m mounting height. -->
+<sdf version="1.9">
+  <world name="corridor">
+    <physics name="1ms" type="ignored">
+      <max_step_size>0.002</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="gz-sim-imu-system" name="gz::sim::systems::Imu"/>
+    <gravity>0 0 -9.8</gravity>
+    <light type="directional" name="sun">
+      <cast_shadows>false</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.9 0.9 0.9 1</diffuse><specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.3 0.2 -0.9</direction>
+    </light>
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry><plane><normal>0 0 1</normal><size>60 60</size></plane></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual">
+          <geometry><plane><normal>0 0 1</normal><size>60 60</size></plane></geometry>
+          <material><ambient>0.8 0.8 0.8 1</ambient><diffuse>0.8 0.8 0.8 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="wall_l">
+      <static>true</static><pose>4.0 1.5 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>9.0 0.15 0.5</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>9.0 0.15 0.5</size></box></geometry>
+          <material><ambient>0.6 0.3 0.2 1</ambient><diffuse>0.7 0.35 0.25 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="wall_r">
+      <static>true</static><pose>4.0 -1.5 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>9.0 0.15 0.5</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>9.0 0.15 0.5</size></box></geometry>
+          <material><ambient>0.6 0.3 0.2 1</ambient><diffuse>0.7 0.35 0.25 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="wall_end">
+      <static>true</static><pose>8.6 0.0 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.15 3.15 0.5</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.15 3.15 0.5</size></box></geometry>
+          <material><ambient>0.6 0.3 0.2 1</ambient><diffuse>0.7 0.35 0.25 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="door_a">
+      <static>true</static><pose>6.0 1.05 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.15 0.9 0.5</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.15 0.9 0.5</size></box></geometry>
+          <material><ambient>0.6 0.3 0.2 1</ambient><diffuse>0.7 0.35 0.25 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="door_b">
+      <static>true</static><pose>6.0 -1.05 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.15 0.9 0.5</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.15 0.9 0.5</size></box></geometry>
+          <material><ambient>0.6 0.3 0.2 1</ambient><diffuse>0.7 0.35 0.25 1</diffuse></material></visual>
+      </link>
+    </model>
+  </world>
+</sdf>

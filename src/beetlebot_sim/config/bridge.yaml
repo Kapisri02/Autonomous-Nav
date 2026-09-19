@@ -1,0 +1,55 @@
+# ros_gz_bridge mapping for the BeetleBot simulation.
+#
+# The ROS-side topic names and types are exactly the ones the existing
+# beetlebot_risk_nav node already expects (see docs/ROS_INTERFACES.md), and the
+# ones the real robot publishes (see the VEEROBOT node-graph documentation).
+# Nothing in the navigation package was changed to suit the bridge.
+
+- ros_topic_name: "/clock"
+  gz_topic_name: "/clock"
+  ros_type_name: "rosgraph_msgs/msg/Clock"
+  gz_type_name: "gz.msgs.Clock"
+  direction: GZ_TO_ROS
+
+# RPLidar C1 -> /scan  (sensor_msgs/LaserScan)
+- ros_topic_name: "/scan"
+  gz_topic_name: "/scan"
+  ros_type_name: "sensor_msgs/msg/LaserScan"
+  gz_type_name: "gz.msgs.LaserScan"
+  direction: GZ_TO_ROS
+
+# Wheel odometry -> /odom  (nav_msgs/Odometry), as lyra_localization publishes
+- ros_topic_name: "/odom"
+  gz_topic_name: "/odom"
+  ros_type_name: "nav_msgs/msg/Odometry"
+  gz_type_name: "gz.msgs.Odometry"
+  direction: GZ_TO_ROS
+
+# odom -> base_footprint transform, as the EKF publishes on the real robot
+- ros_topic_name: "/tf"
+  gz_topic_name: "/model/beetlebot/tf"
+  ros_type_name: "tf2_msgs/msg/TFMessage"
+  gz_type_name: "gz.msgs.Pose_V"
+  direction: GZ_TO_ROS
+
+# LSM6DSRTR IMU -> /imu/data_raw, the name lyra_bridge uses
+- ros_topic_name: "/imu/data_raw"
+  gz_topic_name: "/imu"
+  ros_type_name: "sensor_msgs/msg/Imu"
+  gz_type_name: "gz.msgs.IMU"
+  direction: GZ_TO_ROS
+
+- ros_topic_name: "/joint_states"
+  gz_topic_name: "/joint_states"
+  ros_type_name: "sensor_msgs/msg/JointState"
+  gz_type_name: "gz.msgs.Model"
+  direction: GZ_TO_ROS
+
+# Velocity command INTO the simulated base. The navigation node's default
+# output topic is /cmd_vel_nav, which on the real robot reaches the wheels
+# through the cmd_vel mux; here it reaches the simulated drive directly.
+- ros_topic_name: "/cmd_vel_nav"
+  gz_topic_name: "/cmd_vel"
+  ros_type_name: "geometry_msgs/msg/Twist"
+  gz_type_name: "gz.msgs.Twist"
+  direction: ROS_TO_GZ
